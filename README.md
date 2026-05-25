@@ -30,7 +30,24 @@ Subscribes to the opencode message bus, timestamps every streaming chunk per ses
 
 No system notifications, no terminal bells, no busy-work. Just toast + log.
 
+What a warning looks like in the TUI:
+
+```
+┌──────────────────────────────────────┐
+│ ⏸  Stream stalled                ⚠  │
+│                                      │
+│ backend-specialist · ses_1a16…       │
+│ Silent for 95s (last: reasoning).    │
+│                                      │
+│ Esc to interrupt · ask your          │
+│ foreground agent to kill it for      │
+│ selective abort.                     │
+└──────────────────────────────────────┘
+```
+
 ## Install
+
+**Requires:** opencode v1.2 or later (uses the plugin API).
 
 Add to your `opencode.json`:
 
@@ -41,6 +58,16 @@ Add to your `opencode.json`:
 ```
 
 Restart opencode. That's it — defaults are safe (warn only, no auto-abort).
+
+### Verify it loaded
+
+On startup the plugin writes a load line to opencode's log. Confirm with:
+
+```bash
+grep stream-watchdog ~/.local/share/opencode/log/$(ls -t ~/.local/share/opencode/log/ | head -1)
+```
+
+You should see an entry like `service=stream-watchdog level=info ... loaded`.
 
 ## Configure
 
@@ -89,9 +116,9 @@ When a WARN toast appears:
 
 | You want to… | Do this |
 |---|---|
-| Cancel the stalled session | **Esc** — opencode interrupts the active session; cascades to the active subagent |
-| Cancel selectively (parallel delegations) *(v0.2+)* | Ask Huginn: *"kill the stalled backend-specialist"* — calls `watchdog_abort` tool |
-| Inspect what stalled *(v0.2+)* | Ask Huginn: *"what's the watchdog tracking?"* — calls `watchdog_status` tool |
+| Cancel the stalled session | **Esc** — opencode's interrupt key. In the TUI, this typically reaches the running subagent. |
+| Cancel selectively (parallel delegations) *(v0.2+)* | Ask your foreground agent: *"kill the stalled backend-specialist"* — agent calls the `watchdog_abort` tool |
+| Inspect what stalled *(v0.2+)* | Ask your foreground agent: *"what's the watchdog tracking?"* — agent calls the `watchdog_status` tool |
 | Wait it out | Sticky toast stays until activity resumes (RESUME toast confirms) or auto-abort fires |
 | Adjust the threshold | Add a `perAgent` entry and reload opencode *(v0.2+)* |
 
@@ -111,9 +138,9 @@ state machine: tracking ─────►│
                                    RESUME toast + log
 ```
 
-The watchdog reads `message.part.updated` (fires on every streaming chunk — text, reasoning, or tool delta) and `session.status` events. It calls `client.session.abort()` and `client.tui.showToast()` for actions.
+The watchdog reads `message.part.updated` (fires on every streaming chunk — text, reasoning, or tool delta) and `session.status` events. It emits a **WARN** when activity goes silent past `warnThresholdMs`, **RESUME** if it picks back up, and (optionally) **ABORT** when silence crosses `abortThresholdMs`. Toasts go through `client.tui.showToast()`; the abort goes through `client.session.abort()`.
 
-Details: [`docs/DESIGN.md`](docs/DESIGN.md).
+Details and the *why* behind each decision: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Roadmap
 
@@ -121,7 +148,7 @@ Details: [`docs/DESIGN.md`](docs/DESIGN.md).
 - **v0.2 — Selective control**: per-agent thresholds, `watchdog_status` + `watchdog_abort` tools, opt-in auto-abort.
 - **v1.0 — Trusted defaults**: stats counters, empirical threshold guidance, auto-abort default-on.
 
-Issues live in the [project board](https://github.com/users/momoshell/projects/2/views/1).
+Why the milestones look this way and what gates a default change → [`docs/DESIGN.md` § Versioning](docs/DESIGN.md#versioning). Live tracking on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).
 
 ## Contributing
 

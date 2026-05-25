@@ -96,7 +96,7 @@ Read the issue end-to-end before writing code. If the acceptance criteria are am
 - Reference the issue: `Closes #N` in the PR body.
 - Keep the diff small. If it grew unexpectedly, split before merge.
 - CI must be green. No skipping `--no-verify`.
-- Update CHANGELOG if user-visible behavior changed.
+- Once `CHANGELOG.md` exists (issue #14), update it on any user-visible change.
 
 ## Commit hygiene
 

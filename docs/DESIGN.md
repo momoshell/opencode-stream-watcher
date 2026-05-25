@@ -98,6 +98,8 @@ This is exactly the surface needed: a chunk-level heartbeat we can timestamp, st
         └──────────────┘    └──────────────┘    └──────────────┘
 ```
 
+> ℹ️ WARN, RESUME, and ABORT each fire **at most once per stall window** — the tick loop gates them via the per-session state machine below. See [UX § De-duplication rules](#de-duplication-rules) for the exact gating.
+
 State machine per tracked session:
 
 ```
@@ -115,7 +117,7 @@ Alternatives considered:
 
 1. **Per-session timer** — `setTimeout` per session, cleared/reset on each chunk. Rejected: high churn (one timer per chunk per session per active stream), edge cases on cleanup.
 2. **Compute idle on every chunk arrival** — purely event-driven. Rejected: doesn't fire when there are no chunks (which is the whole problem).
-3. **Single periodic scan (chosen)** — one `setInterval`, iterate the map every tick. O(n) where n is small (typically 1–4 active sessions). Cheap, easy to reason about, easy to test.
+3. **Single periodic scan (chosen)** — one `setInterval`, iterate the map every tick. O(n) where n is the number of concurrent active subagent sessions (typically a handful, even in heavily parallel orchestrator setups). Cheap, easy to reason about, easy to test.
 
 ### Why we don't poll the log file
 
@@ -145,8 +147,8 @@ opencode's keybinding system treats `esc` as the interrupt key (`escape:"esc"` i
 
 | Path | When | Mechanism |
 |---|---|---|
-| Esc cascade | Single active delegation stalls | User hits Esc; opencode interrupts the foreground session and cascades to the active subagent. Parent sees `error=Aborted process`, handles per its existing no-op verification protocol. |
-| `watchdog_abort` tool *(v0.2+)* | Parallel delegations where only one is stuck | Foreground agent (Huginn / Muninn) calls `watchdog_abort(sessionID)`; plugin invokes `client.session.abort()` on just that one. |
+| Esc cascade | Single active delegation stalls | User hits Esc — opencode's TUI interrupt key. In observed setups (e.g., Muninn → backend-specialist), this reaches the active subagent and the parent sees `error=Aborted process`, handled per its existing no-op verification protocol. |
+| `watchdog_abort` tool *(v0.2+)* | Parallel delegations where only one is stuck | Foreground agent (e.g., Huginn, Muninn, or any primary in the user's setup) calls `watchdog_abort(sessionID)`; plugin invokes `client.session.abort()` on just that one. |
 | `watchdog_status` tool *(v0.2+)* | Before deciding to kill | Lists tracked sessions with idle times and last-part-kind. Helps the user judge "real stall" vs "long reasoning." |
 | `read_session` (via opencode-handoff plugin) | Forensic | If the user has `opencode-handoff` installed, ask the foreground agent to read the stuck subagent's transcript so far. |
 | Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms) or abort fires. |
@@ -180,4 +182,4 @@ These are not blockers; they'll resolve during v0.1 dogfood.
 
 1. **How does the parent session experience a `client.session.abort()` of its delegated child?** We've observed user-initiated Esc cascade producing a clean `error=Aborted process` on both parent and child. Programmatic abort *should* produce the same shape. v0.2 issue #17 explicitly verifies this.
 2. **What threshold for "resumed activity" before re-arming WARN?** Current plan: >30s of fresh deltas. May need tuning. Issue #21 (stats counters) will give us data.
-3. **Does `message.part.updated` fire for every reasoning token, or only on part-state changes?** Empirical question. If only state changes, we may need to also subscribe to `message.part.delta` (if exposed) for finer-grained heartbeat.
+3. **Does `message.part.updated` fire for every reasoning token, or only on part-state changes?** To be verified during issue #3 by tailing the bus during a session with active reasoning. If only state changes, we'll also subscribe to `message.part.delta` (visible in the SDK type union) for finer-grained heartbeat. The fallback path is cheap to add, so this question doesn't gate v0.1 — it just shapes #3's implementation.
