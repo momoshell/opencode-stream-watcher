@@ -145,7 +145,7 @@ Details and the *why* behind each decision: [`docs/DESIGN.md`](docs/DESIGN.md).
 ## Roadmap
 
 - **v0.1 — Notify-only** *(current)*: WARN + RESUME toasts, structured logs, safe defaults.
-- **v0.2 — Selective control**: per-agent thresholds, `watchdog_status` + `watchdog_abort` tools, opt-in auto-abort.
+- **v0.2 — Selective control**: per-agent thresholds, `watchdog_status` + `watchdog_abort` tools, opt-in auto-abort, turn duration display.
 - **v1.0 — Trusted defaults**: stats counters, empirical threshold guidance, auto-abort default-on.
 
 Why the milestones look this way and what gates a default change → [`docs/DESIGN.md` § Versioning](docs/DESIGN.md#versioning). Live tracking on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).

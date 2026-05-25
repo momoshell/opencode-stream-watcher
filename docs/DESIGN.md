@@ -123,15 +123,25 @@ Alternatives considered:
 
 The earlier safeguard option ("external log-tailer") would work but has worse ergonomics: it lives outside opencode, can't render toasts, can't call `session.abort`. The plugin path gives us the real TUI surface and the SDK actions in-process.
 
+### Turn duration as a free side effect *(v0.2+)*
+
+Once the plugin is subscribed to `session.status`, computing per-turn duration is essentially free: record `callStart` when status goes `busy`, compute `now - callStart` when `session.idle` fires. opencode's bus only emits `session.idle` at the end of a turn (one prompt → many internal LLM steps → one idle), so the cadence is one toast per agent response — not per inner step.
+
+This piggybacks on the existing event hook without separate timer infrastructure. It also produces the empirical duration data we need for per-agent threshold tuning in v0.2 and for the statistical guidance in v1.0.
+
+Live "running for Xs…" indicators are explicitly out of scope: opencode toasts are fire-and-forget (no toast ID in `TuiShowToastData`), so we can't update a shown toast in place. Post-hoc display is what the API supports, and that's what users actually need — knowing how long the *previous* turn took is what informs the next decision.
+
 ## UX
 
 ### Toast shapes
 
 | State | Variant | Title | Duration | Message hint |
 |---|---|---|---|---|
-| WARN | warning | `⏸ Stream stalled` | 0 (sticky) | `<agent> · <slug> · silent for Xs (last: <part-kind>). Esc to interrupt · ask Huginn "kill <agent>" for selective abort.` |
+| WARN | warning | `⏸ Stream stalled` | 0 (sticky) | `<agent> · <slug> · silent for Xs (last: <part-kind>). Esc to interrupt · ask your foreground agent to kill it for selective abort.` |
 | RESUME | success | `▶ Stream recovered` | 4000ms | `<agent> · <slug> · resumed after Xs.` |
 | ABORT | error | `🛑 Aborted stalled stream` | 8000ms | `<agent> · <slug> · Xs silent → auto-aborted. Parent will see error.` |
+| TURN-DONE *(v0.2+)* | info | `⌛ Turn done` | 3000ms | `<agent> · <duration>` — fires when a session goes `idle` if elapsed ≥ `duration.minToastMs` |
+| TURN-DONE-SLOW *(v0.2+)* | warning | `⌛ Turn done · slow` | 5000ms | `<agent> · <duration>` — same trigger as TURN-DONE but elapsed ≥ `duration.slowToastMs` |
 
 ### De-duplication rules
 
