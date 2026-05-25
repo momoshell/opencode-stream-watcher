@@ -1,0 +1,50 @@
+{
+  "name": "opencode-stream-watcher",
+  "version": "0.0.0",
+  "description": "Detect and recover from silent LLM stream stalls in opencode subagents.",
+  "type": "module",
+  "main": "./dist/plugin.js",
+  "exports": {
+    ".": {
+      "import": "./dist/plugin.js",
+      "types": "./dist/plugin.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "llm",
+    "watchdog",
+    "stream",
+    "stall",
+    "timeout"
+  ],
+  "author": "momoshell",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/momoshell/opencode-stream-watcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/momoshell/opencode-stream-watcher/issues"
+  },
+  "homepage": "https://github.com/momoshell/opencode-stream-watcher#readme",
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.2"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.2.26",
+    "@types/node": "^22.13.9",
+    "typescript": "^5.8.2"
+  }
+}

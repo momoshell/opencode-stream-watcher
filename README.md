@@ -1,1 +1,136 @@
 # opencode-stream-watcher
+
+> Detect and recover from silent LLM stream stalls in opencode subagents.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## The problem
+
+You delegate work to an opencode subagent. The TUI shows it's running. Minutes pass. No output. Nothing in the log. The agent isn't crashed — the LLM stream just *stopped emitting tokens*, and opencode has no built-in idle-stream timeout.
+
+The fingerprint in `~/.local/share/opencode/log/`:
+
+```
+INFO 10:14:00 service=llm modelID=gpt-5.4 agent=backend-specialist mode=subagent stream
+...                                          (22 minutes of silence)
+INFO 10:36:36 service=session.prompt cancel
+ERROR 10:36:36 error=Aborted process
+```
+
+You only know it's stuck because *you* noticed, hit Esc, and reconstructed the timeline after the fact.
+
+## What this plugin does
+
+Subscribes to the opencode message bus, timestamps every streaming chunk per session, and:
+
+- **Warns you** with a sticky TUI toast when a session goes quiet past a threshold (default 90s).
+- **Lets you know** when it recovers, via a transient success toast.
+- **Optionally auto-aborts** the stalled session (off by default; opt in when you trust it).
+- **Logs everything** through opencode's structured log so you can grep incident history.
+
+No system notifications, no terminal bells, no busy-work. Just toast + log.
+
+## Install
+
+Add to your `opencode.json`:
+
+```json
+{
+  "plugin": ["opencode-stream-watcher"]
+}
+```
+
+Restart opencode. That's it — defaults are safe (warn only, no auto-abort).
+
+## Configure
+
+All keys optional; defaults shown:
+
+```json
+{
+  "plugin": ["opencode-stream-watcher"],
+  "stream-watchdog": {
+    "warnThresholdMs": 90000,
+    "abortThresholdMs": 0,
+    "tickMs": 10000,
+    "toast": true,
+    "log": true
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `warnThresholdMs` | `90000` | Idle milliseconds before a WARN toast fires |
+| `abortThresholdMs` | `0` | Idle ms before auto-abort. `0` disables auto-abort (notify-only mode) |
+| `tickMs` | `10000` | How often the watchdog checks tracked sessions |
+| `toast` | `true` | Show TUI toasts |
+| `log` | `true` | Write structured log entries via `client.app.log` |
+
+### Per-agent overrides *(v0.2+)*
+
+```json
+{
+  "stream-watchdog": {
+    "warnThresholdMs": 90000,
+    "perAgent": {
+      "code-reviewer-deep": { "warnThresholdMs": 300000 },
+      "doc-writer":         { "warnThresholdMs": 60000 }
+    }
+  }
+}
+```
+
+High-reasoning agents (`xhigh` effort, deep reviewers) can sit on reasoning longer than the default warn threshold without it being a real stall. Tune per agent.
+
+## Reaction paths
+
+When a WARN toast appears:
+
+| You want to… | Do this |
+|---|---|
+| Cancel the stalled session | **Esc** — opencode interrupts the active session; cascades to the active subagent |
+| Cancel selectively (parallel delegations) *(v0.2+)* | Ask Huginn: *"kill the stalled backend-specialist"* — calls `watchdog_abort` tool |
+| Inspect what stalled *(v0.2+)* | Ask Huginn: *"what's the watchdog tracking?"* — calls `watchdog_status` tool |
+| Wait it out | Sticky toast stays until activity resumes (RESUME toast confirms) or auto-abort fires |
+| Adjust the threshold | Add a `perAgent` entry and reload opencode *(v0.2+)* |
+
+## How it works
+
+```
+opencode bus ──► event hook ──► per-session lastActivity map
+                                         │
+                              every tickMs (10s)
+                                         ▼
+                              ┌─ idle > warnThreshold  ──► WARN toast + log
+state machine: tracking ─────►│
+                              └─ idle > abortThreshold ──► session.abort() + ABORT toast + log
+                                         │
+                              activity resumes
+                                         ▼
+                                   RESUME toast + log
+```
+
+The watchdog reads `message.part.updated` (fires on every streaming chunk — text, reasoning, or tool delta) and `session.status` events. It calls `client.session.abort()` and `client.tui.showToast()` for actions.
+
+Details: [`docs/DESIGN.md`](docs/DESIGN.md).
+
+## Roadmap
+
+- **v0.1 — Notify-only** *(current)*: WARN + RESUME toasts, structured logs, safe defaults.
+- **v0.2 — Selective control**: per-agent thresholds, `watchdog_status` + `watchdog_abort` tools, opt-in auto-abort.
+- **v1.0 — Trusted defaults**: stats counters, empirical threshold guidance, auto-abort default-on.
+
+Issues live in the [project board](https://github.com/users/momoshell/projects/2/views/1).
+
+## Contributing
+
+PRs welcome. Start with [`AGENTS.md`](AGENTS.md) (for AI-assisted contributors) and [`CONTRIBUTING.md`](CONTRIBUTING.md) (for humans). Good-first-issues are tagged.
+
+## Not affiliated
+
+opencode is built by Anomaly. This plugin is independent and unaffiliated.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

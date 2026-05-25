@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new capability or change
+title: "[feature] "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening: please read [`AGENTS.md` § What NOT to add](https://github.com/momoshell/opencode-stream-watcher/blob/main/AGENTS.md#what-not-to-add) — some proposals are intentionally out of scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-visible problem, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the API / config / UX look like?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Why is this proposal better than the alternatives?
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope estimate
+      description: Roughly how big do you think this is? One PR, or a milestone?
+    validations:
+      required: false

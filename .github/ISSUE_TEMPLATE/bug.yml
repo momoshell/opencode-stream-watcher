@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a bug or unexpected behavior in the plugin
+title: "[bug] "
+labels: ["type:chore"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please include version info and relevant log lines — they're almost always required to debug.
+
+  - type: input
+    id: opencode-version
+    attributes:
+      label: opencode version
+      description: Output of `opencode --version`
+      placeholder: "1.15.5"
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: From your `opencode.json` or `~/.cache/opencode/node_modules/opencode-stream-watcher/package.json`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Be as specific as possible
+      placeholder: |
+        1. Configure with `...`
+        2. Run opencode
+        3. Trigger a stall by ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: From `~/.local/share/opencode/log/`. Grep for `stream-watchdog`.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Your config
+      description: Your `stream-watchdog` block from `opencode.json`. Redact anything sensitive.
+      render: json
+    validations:
+      required: false
