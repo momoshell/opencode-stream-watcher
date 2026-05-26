@@ -3,17 +3,32 @@ import type { Plugin } from "@opencode-ai/plugin";
 import {
   createTrackedSessions,
   recordPartActivity,
+  scanTrackedSessions,
   startTracking,
   stopTracking,
   type SessionMetadata,
   updateSessionMetadata,
 } from "./state.js";
-import type { TrackedSession } from "./types.js";
+import type { StallTransition, TrackedSession, WatchdogConfig } from "./types.js";
 
 const SERVICE = "stream-watchdog";
+type PluginClient = Parameters<Plugin>[0]["client"];
+const DEFAULT_TICK_LOOP_CONFIG = {
+  warnThresholdMs: 90_000,
+  abortThresholdMs: 0,
+  tickMs: 10_000,
+  log: true,
+} satisfies Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log">;
+
+type ActiveTickLoop = {
+  interval: ReturnType<typeof globalThis.setInterval>;
+};
+
+let activeTickLoop: ActiveTickLoop | undefined;
 
 export const StreamWatchdog: Plugin = async ({ client }) => {
   const trackedSessions = createTrackedSessions();
+  startTickLoop(client, trackedSessions, DEFAULT_TICK_LOOP_CONFIG);
 
   await client.app.log({
     body: {
@@ -113,6 +128,38 @@ export const StreamWatchdog: Plugin = async ({ client }) => {
   };
 };
 
+function startTickLoop(
+  client: PluginClient,
+  trackedSessions: Map<string, TrackedSession>,
+  config: Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log">,
+): void {
+  stopTickLoop();
+
+  const interval = globalThis.setInterval(() => {
+    const transitions = scanTrackedSessions(trackedSessions, config);
+
+    if (!config.log || transitions.length === 0) {
+      return;
+    }
+
+    void logTickTransitions(client, transitions).catch(() => undefined);
+  }, config.tickMs);
+
+  activeTickLoop = { interval };
+  maybeUnrefTimer(interval);
+}
+
+function stopTickLoop(): void {
+  const interval = activeTickLoop?.interval;
+
+  if (!interval) {
+    return;
+  }
+
+  globalThis.clearInterval(interval);
+  activeTickLoop = undefined;
+}
+
 async function enrichSessionMetadata(
   client: Parameters<Plugin>[0]["client"],
   trackedSessions: Map<string, TrackedSession>,
@@ -185,6 +232,70 @@ async function logStopTracking(
       },
     },
   });
+}
+
+async function logTickTransitions(
+  client: PluginClient,
+  transitions: StallTransition[],
+): Promise<void> {
+  for (const transition of transitions) {
+    await client.app.log({
+      body: {
+        service: SERVICE,
+        level: getTransitionLogLevel(transition),
+        message: getTransitionMessage(transition),
+        extra: {
+          sessionID: transition.sessionID,
+          from: transition.from,
+          to: transition.to,
+          at: transition.at,
+          idleMs: transition.idleMs,
+          agent: transition.tracked.agent,
+          slug: transition.tracked.slug,
+          lastPartKind: transition.tracked.lastPartKind,
+          state: transition.tracked.state,
+          stateSince: transition.tracked.stateSince,
+          lastActivity: transition.tracked.lastActivity,
+        },
+      },
+    });
+  }
+}
+
+function getTransitionLogLevel(
+  transition: StallTransition,
+): "debug" | "warn" {
+  return transition.to === "tracking" ? "debug" : "warn";
+}
+
+function getTransitionMessage(transition: StallTransition): string {
+  switch (transition.to) {
+    case "warned":
+      return "session stall warning";
+    case "tracking":
+      return "session stall cleared";
+    case "aborted":
+      return "session stall abort threshold reached";
+  }
+}
+
+type TimerWithUnref = {
+  unref: () => void;
+};
+
+function maybeUnrefTimer(timer: ReturnType<typeof globalThis.setInterval>): void {
+  if (hasUnref(timer)) {
+    timer.unref();
+  }
+}
+
+function hasUnref(value: unknown): value is TimerWithUnref {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "unref" in value &&
+    typeof value.unref === "function"
+  );
 }
 
 function readSessionMetadata(session: unknown): SessionMetadata {
