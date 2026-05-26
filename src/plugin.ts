@@ -1,2 +1,15 @@
-// Placeholder-only plugin entrypoint scaffold for issue #1.
-export {};
+import type { Plugin } from "@opencode-ai/plugin";
+
+export const StreamWatchdog: Plugin = async ({ client }) => {
+  await client.app.log({
+    body: {
+      service: "stream-watchdog",
+      level: "info",
+      message: "loaded",
+    },
+  });
+
+  return {
+    event: async () => {},
+  };
+};
