@@ -15,6 +15,17 @@ export interface TrackedSession {
   agent?: string;
   slug?: string;
   lastActivity: number;
+  resumeStartedAt?: number;
   lastPartKind?: LastPartKind;
   state: StallState;
+  stateSince: number;
+}
+
+export interface StallTransition {
+  sessionID: string;
+  from: StallState;
+  to: StallState;
+  at: number;
+  idleMs: number;
+  tracked: TrackedSession;
 }
