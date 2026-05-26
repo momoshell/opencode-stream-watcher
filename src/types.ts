@@ -1,5 +1,7 @@
 export type StallState = "tracking" | "warned" | "aborted";
 
+export type LastPartKind = "text" | "reasoning" | "tool";
+
 export interface WatchdogConfig {
   warnThresholdMs: number;
   abortThresholdMs: number;
@@ -13,6 +15,6 @@ export interface TrackedSession {
   agent?: string;
   slug?: string;
   lastActivity: number;
-  lastPartKind?: string;
+  lastPartKind?: LastPartKind;
   state: StallState;
 }
