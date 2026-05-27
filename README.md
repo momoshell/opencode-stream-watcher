@@ -4,6 +4,18 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+## In one minute
+
+`opencode-stream-watcher` catches a narrow but painful failure mode: a subagent is still "running," but the LLM stream has gone silent.
+
+It solves that with:
+
+- a sticky **WARN** toast in the TUI
+- a **RESUME** toast if the stream comes back
+- structured log entries you can grep later
+
+Default behavior is safe: **warn only, no auto-abort**.
+
 ## The problem
 
 You delegate work to an opencode subagent. The TUI shows it's running. Minutes pass. No output. Nothing in the log. The agent isn't crashed — the LLM stream just *stopped emitting tokens*, and opencode has no built-in idle-stream timeout.
@@ -49,7 +61,7 @@ What a warning looks like in the TUI:
 
 **Requires:** opencode v1.2 or later (uses the plugin API).
 
-Add to your `opencode.json`:
+Add this to your `opencode.json`:
 
 ```json
 {
@@ -57,7 +69,13 @@ Add to your `opencode.json`:
 }
 ```
 
-Restart opencode. That's it — defaults are safe (warn only, no auto-abort).
+```text
+1. Add the plugin entry.
+2. Restart opencode.
+3. If a subagent stalls, react from the toast.
+```
+
+That's it — defaults are safe (warn only, no auto-abort).
 
 ### Verify it loaded
 
@@ -94,7 +112,7 @@ All keys optional; defaults shown:
 | `toast` | `true` | Show TUI toasts |
 | `log` | `true` | Write structured log entries via `client.app.log` |
 
-### Per-agent overrides *(v0.2+)*
+### Forward-looking config *(v0.2+)*
 
 ```json
 {
@@ -108,7 +126,7 @@ All keys optional; defaults shown:
 }
 ```
 
-High-reasoning agents (`xhigh` effort, deep reviewers) can sit on reasoning longer than the default warn threshold without it being a real stall. Tune per agent.
+Not available in v0.1 yet. Planned for agents that legitimately sit in long reasoning phases.
 
 ## Reaction paths
 
@@ -117,10 +135,10 @@ When a WARN toast appears:
 | You want to… | Do this |
 |---|---|
 | Cancel the stalled session | **Esc** — opencode's interrupt key. In the TUI, this typically reaches the running subagent. |
-| Cancel selectively (parallel delegations) *(v0.2+)* | Ask your foreground agent: *"kill the stalled backend-specialist"* — agent calls the `watchdog_abort` tool |
-| Inspect what stalled *(v0.2+)* | Ask your foreground agent: *"what's the watchdog tracking?"* — agent calls the `watchdog_status` tool |
+| Ask Huginn to abort only the stuck subagent *(v0.2+)* | Forward-looking: ask your foreground agent to kill the stalled subagent once `watchdog_abort` ships |
 | Wait it out | Sticky toast stays until activity resumes (RESUME toast confirms) or auto-abort fires |
-| Adjust the threshold | Add a `perAgent` entry and reload opencode *(v0.2+)* |
+| Restart the whole session | If the subagent stays wedged or repeated stalls suggest a bad state, restart opencode and retry |
+| Adjust the threshold | Change the config values above, then restart opencode |
 
 ## How it works
 
@@ -152,7 +170,7 @@ Why the milestones look this way and what gates a default change → [`docs/DESI
 
 ## Contributing
 
-PRs welcome. Start with [`AGENTS.md`](AGENTS.md) (for AI-assisted contributors) and [`CONTRIBUTING.md`](CONTRIBUTING.md) (for humans). Good-first-issues are tagged.
+PRs welcome. Start with [`AGENTS.md`](AGENTS.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md). Good-first-issues are tagged.
 
 ## Not affiliated
 
