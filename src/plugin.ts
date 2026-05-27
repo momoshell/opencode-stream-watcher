@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 
+import { loadWatchdogConfig, type ConfigLogger } from "./config.js";
 import {
   createTrackedSessions,
   recordPartActivity,
@@ -14,12 +15,6 @@ import type { StallTransition, TrackedSession, WatchdogConfig } from "./types.js
 
 const SERVICE = "stream-watchdog";
 type PluginClient = Parameters<Plugin>[0]["client"];
-const DEFAULT_TICK_LOOP_CONFIG = {
-  warnThresholdMs: 90_000,
-  abortThresholdMs: 0,
-  tickMs: 10_000,
-  log: true,
-} satisfies Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log">;
 
 type ActiveTickLoop = {
   interval: ReturnType<typeof globalThis.setInterval>;
@@ -27,9 +22,14 @@ type ActiveTickLoop = {
 
 let activeTickLoop: ActiveTickLoop | undefined;
 
-export const StreamWatchdog: Plugin = async ({ client }) => {
+export const StreamWatchdog: Plugin = async ({ project, client, directory, worktree }) => {
   const trackedSessions = createTrackedSessions();
-  startTickLoop(client, trackedSessions, DEFAULT_TICK_LOOP_CONFIG);
+  const config = await loadWatchdogConfig({
+    projectRoot: deriveProjectRoot(project, directory, worktree),
+    logger: createConfigLogger(client),
+  });
+
+  startTickLoop(client, trackedSessions, config);
 
   await safeLog(client, {
     service: SERVICE,
@@ -89,6 +89,62 @@ export const StreamWatchdog: Plugin = async ({ client }) => {
     },
   };
 };
+
+function deriveProjectRoot(project: unknown, directory: unknown, worktree: unknown): string {
+  if (isNonEmptyString(worktree)) {
+    return worktree;
+  }
+
+  const projectRoot = readProjectRoot(project);
+  if (projectRoot) {
+    return projectRoot;
+  }
+
+  if (isNonEmptyString(directory)) {
+    return directory;
+  }
+
+  return process.cwd();
+}
+
+function readProjectRoot(project: unknown): string | undefined {
+  if (isNonEmptyString(project)) {
+    return project;
+  }
+
+  if (!isRecord(project)) {
+    return undefined;
+  }
+
+  const path = getOptionalString(project["path"]);
+  if (isNonEmptyString(path)) {
+    return path;
+  }
+
+  const root = getOptionalString(project["root"]);
+  if (isNonEmptyString(root)) {
+    return root;
+  }
+
+  const directory = getOptionalString(project["directory"]);
+  if (isNonEmptyString(directory)) {
+    return directory;
+  }
+
+  return undefined;
+}
+
+function createConfigLogger(client: PluginClient): ConfigLogger {
+  return (message, level = "warn") => {
+    const resolvedLevel = level === "error" ? "warn" : level;
+
+    void safeLog(client, {
+      service: SERVICE,
+      level: resolvedLevel,
+      message,
+    });
+  };
+}
 
 function startTickLoop(
   client: PluginClient,
@@ -225,4 +281,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getOptionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }
