@@ -9,6 +9,7 @@ import {
   type SessionMetadata,
   updateSessionMetadata,
 } from "./state.js";
+import { buildIncidentLogEntry, type IncidentStage } from "./notify.js";
 import type { StallTransition, TrackedSession, WatchdogConfig } from "./types.js";
 
 const SERVICE = "stream-watchdog";
@@ -30,12 +31,10 @@ export const StreamWatchdog: Plugin = async ({ client }) => {
   const trackedSessions = createTrackedSessions();
   startTickLoop(client, trackedSessions, DEFAULT_TICK_LOOP_CONFIG);
 
-  await client.app.log({
-    body: {
-      service: SERVICE,
-      level: "info",
-      message: "loaded",
-    },
+  await safeLog(client, {
+    service: SERVICE,
+    level: "info",
+    message: "loaded",
   });
 
   return {
@@ -50,74 +49,37 @@ export const StreamWatchdog: Plugin = async ({ client }) => {
           const tracked = startTracking(trackedSessions, sessionID);
           void enrichSessionMetadata(client, trackedSessions, sessionID);
 
-          await client.app.log({
-            body: {
-              service: SERVICE,
-              level: "debug",
-              message: "tracking session",
-              extra: {
-                sessionID: tracked.sessionID,
-                agent: tracked.agent,
-                slug: tracked.slug,
-              },
-            },
-          });
+          await safeLog(client, buildIncidentLogEntry({
+            stage: "tracking-start",
+            sessionID: tracked.sessionID,
+            agent: tracked.agent ?? "unknown",
+            idleMs: 0,
+            lastPartKind: tracked.lastPartKind,
+          }));
           return;
         }
 
         case "message.part.updated": {
-          const tracked = recordPartActivity(
+          recordPartActivity(
             trackedSessions,
             event.properties.part.sessionID,
             event.properties.part,
           );
-
-          if (!tracked) {
-            return;
-          }
-
-          await client.app.log({
-            body: {
-              service: SERVICE,
-              level: "debug",
-              message: "recorded session activity",
-              extra: {
-                sessionID: tracked.sessionID,
-                lastActivity: tracked.lastActivity,
-                lastPartKind: tracked.lastPartKind,
-              },
-            },
-          });
           return;
         }
 
         case "session.idle": {
-          await logStopTracking(
-            client,
-            event.properties.sessionID,
-            stopTracking(trackedSessions, event.properties.sessionID),
-            "session idle",
-          );
+          stopTracking(trackedSessions, event.properties.sessionID);
           return;
         }
 
         case "session.error": {
-          await logStopTracking(
-            client,
-            event.properties.sessionID,
-            stopTracking(trackedSessions, event.properties.sessionID),
-            "session error",
-          );
+          stopTracking(trackedSessions, event.properties.sessionID);
           return;
         }
 
         case "session.deleted": {
-          await logStopTracking(
-            client,
-            event.properties.info.id,
-            stopTracking(trackedSessions, event.properties.info.id),
-            "session deleted",
-          );
+          stopTracking(trackedSessions, event.properties.info.id);
           return;
         }
 
@@ -167,24 +129,7 @@ async function enrichSessionMetadata(
 ): Promise<void> {
   try {
     const metadata = await getSessionMetadata(client, sessionID);
-    const tracked = updateSessionMetadata(trackedSessions, sessionID, metadata);
-
-    if (!tracked) {
-      return;
-    }
-
-    await client.app.log({
-      body: {
-        service: SERVICE,
-        level: "debug",
-        message: "updated session metadata",
-        extra: {
-          sessionID: tracked.sessionID,
-          agent: tracked.agent,
-          slug: tracked.slug,
-        },
-      },
-    });
+    updateSessionMetadata(trackedSessions, sessionID, metadata);
   } catch {
     // Metadata is best-effort and must never interrupt activity tracking.
   }
@@ -197,41 +142,9 @@ async function getSessionMetadata(
   try {
     const response = await client.session.get({ path: { id: sessionID } });
     return readSessionMetadata(response.data);
-  } catch (error) {
-    await client.app.log({
-      body: {
-        service: SERVICE,
-        level: "debug",
-        message: "session metadata unavailable",
-        extra: {
-          sessionID,
-          error: getErrorMessage(error),
-        },
-      },
-    });
-
+  } catch {
     return {};
   }
-}
-
-async function logStopTracking(
-  client: Parameters<Plugin>[0]["client"],
-  sessionID: string | undefined,
-  removed: boolean,
-  reason: string,
-): Promise<void> {
-  await client.app.log({
-    body: {
-      service: SERVICE,
-      level: "debug",
-      message: "stopped tracking session",
-      extra: {
-        sessionID,
-        removed,
-        reason,
-      },
-    },
-  });
 }
 
 async function logTickTransitions(
@@ -239,43 +152,40 @@ async function logTickTransitions(
   transitions: StallTransition[],
 ): Promise<void> {
   for (const transition of transitions) {
-    await client.app.log({
-      body: {
-        service: SERVICE,
-        level: getTransitionLogLevel(transition),
-        message: getTransitionMessage(transition),
-        extra: {
-          sessionID: transition.sessionID,
-          from: transition.from,
-          to: transition.to,
-          at: transition.at,
-          idleMs: transition.idleMs,
-          agent: transition.tracked.agent,
-          slug: transition.tracked.slug,
-          lastPartKind: transition.tracked.lastPartKind,
-          state: transition.tracked.state,
-          stateSince: transition.tracked.stateSince,
-          lastActivity: transition.tracked.lastActivity,
-        },
-      },
-    });
+    await safeLog(client, buildIncidentLogEntry({
+      stage: toIncidentStage(transition),
+      sessionID: transition.sessionID,
+      agent: transition.tracked.agent ?? "unknown",
+      idleMs: transition.idleMs,
+      lastPartKind: transition.tracked.lastPartKind,
+    }));
   }
 }
 
-function getTransitionLogLevel(
-  transition: StallTransition,
-): "debug" | "warn" {
-  return transition.to === "tracking" ? "debug" : "warn";
-}
-
-function getTransitionMessage(transition: StallTransition): string {
+function toIncidentStage(transition: StallTransition): IncidentStage {
   switch (transition.to) {
     case "warned":
-      return "session stall warning";
+      return "WARN";
     case "tracking":
-      return "session stall cleared";
+      return "RESUME";
     case "aborted":
-      return "session stall abort threshold reached";
+      return "ABORT";
+  }
+}
+
+async function safeLog(
+  client: PluginClient,
+  body: {
+    service: "stream-watchdog";
+    level: "info" | "warn";
+    message: string;
+    extra?: Record<string, string | number>;
+  },
+): Promise<void> {
+  try {
+    await client.app.log({ body });
+  } catch {
+    // Logging is best-effort and must never interrupt plugin behavior.
   }
 }
 
@@ -315,8 +225,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getOptionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
