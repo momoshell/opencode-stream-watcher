@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildIncidentLogEntry, buildWarnToastBody } from "../dist/notify.js";
+import {
+  buildIncidentLogEntry,
+  buildResumeToastBody,
+  buildWarnToastBody,
+} from "../dist/notify.js";
 
 describe("notify buildIncidentLogEntry", () => {
   test("maps tracking-start and RESUME to info", () => {
@@ -110,6 +114,24 @@ describe("buildWarnToastBody", () => {
       message:
         'Agent: unknown\nSession: session-abc\nIdle: 12s\nLast part: unknown\nEsc to interrupt · ask Huginn "kill unknown" for selective abort',
       duration: 0,
+    });
+  });
+});
+
+describe("buildResumeToastBody", () => {
+  test("builds success toast payload with floored resumed seconds", () => {
+    expect(
+      buildResumeToastBody({
+        sessionID: "session-123",
+        slug: "agent-x-run",
+        agent: "agent-x",
+        resumedAfterMs: 4_999,
+      }),
+    ).toEqual({
+      title: "▶ Stream recovered",
+      variant: "success",
+      duration: 4000,
+      message: "agent-x · agent-x-run · resumed after 4s",
     });
   });
 });

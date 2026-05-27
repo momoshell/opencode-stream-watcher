@@ -88,6 +88,20 @@ async function stopSession(hooks, sessionID) {
   });
 }
 
+async function updatePart(hooks, sessionID, kind = "assistant") {
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          sessionID,
+          kind,
+        },
+      },
+    },
+  });
+}
+
 async function waitFor(predicate) {
   const deadline = Date.now() + 500;
 
@@ -158,5 +172,49 @@ describe("StreamWatchdog WARN gating", () => {
     await stopSession(hooks, "session-abort-no-toast");
 
     expect(toasts).toHaveLength(1);
+  });
+
+  test("does not emit RESUME success toast without prior WARN", async () => {
+    const { hooks, toasts } = await startPlugin({
+      warnThresholdMs: 5_000,
+      abortThresholdMs: 0,
+      tickMs: 5,
+      toast: true,
+      log: false,
+    });
+
+    await startBusySession(hooks, "session-no-warn-no-resume");
+    await updatePart(hooks, "session-no-warn-no-resume");
+    await stopSession(hooks, "session-no-warn-no-resume");
+
+    expect(toasts.some((toast) => toast.title === "▶ Stream recovered")).toBe(false);
+  });
+
+  test("repeated updates after WARN before re-arm emit one RESUME success toast", async () => {
+    const { hooks, toasts } = await startPlugin({
+      warnThresholdMs: 5,
+      abortThresholdMs: 0,
+      tickMs: 5,
+      toast: true,
+      log: false,
+    });
+
+    await startBusySession(hooks, "session-resume-once");
+    await waitFor(() => toasts.some((toast) => toast.title === "⏸ Stream stalled"));
+
+    await updatePart(hooks, "session-resume-once", "assistant");
+    await updatePart(hooks, "session-resume-once", "assistant");
+    await updatePart(hooks, "session-resume-once", "assistant");
+    await stopSession(hooks, "session-resume-once");
+
+    const resumeToasts = toasts.filter((toast) => toast.title === "▶ Stream recovered");
+    expect(resumeToasts).toHaveLength(1);
+    expect(resumeToasts[0]).toEqual(
+      expect.objectContaining({
+        title: "▶ Stream recovered",
+        variant: "success",
+        duration: 4000,
+      }),
+    );
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "./state.js";
 import {
   buildIncidentLogEntry,
+  buildResumeToastBody,
   buildWarnToastBody,
   normalizeAgent,
   type IncidentStage,
@@ -65,11 +66,29 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
         }
 
         case "message.part.updated": {
-          recordPartActivity(
+          const sessionID = event.properties.part.sessionID;
+          const previousResumeStartedAt = trackedSessions.get(sessionID)?.resumeStartedAt;
+          const tracked = recordPartActivity(
             trackedSessions,
-            event.properties.part.sessionID,
+            sessionID,
             event.properties.part,
           );
+
+          if (
+            config.toast &&
+            tracked &&
+            tracked.state === "warned" &&
+            previousResumeStartedAt === undefined &&
+            tracked.resumeStartedAt !== undefined
+          ) {
+            await safeToast(client, buildResumeToastBody({
+              sessionID: tracked.sessionID,
+              slug: tracked.slug,
+              agent: tracked.agent,
+              resumedAfterMs: Math.max(0, tracked.resumeStartedAt - tracked.stateSince),
+            }));
+          }
+
           return;
         }
 
@@ -268,7 +287,7 @@ async function safeToast(
   body: {
     title?: string;
     message: string;
-    variant: "warning";
+    variant: "warning" | "success";
     duration?: number;
   },
 ): Promise<void> {
