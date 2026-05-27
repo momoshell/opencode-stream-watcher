@@ -21,6 +21,13 @@ export type WarnToastBody = {
   duration: 0;
 };
 
+export type ResumeToastBody = {
+  title: "▶ Stream recovered";
+  message: string;
+  variant: "success";
+  duration: 4000;
+};
+
 export const UNKNOWN_LAST_PART_KIND = "unknown";
 export const UNKNOWN_AGENT = "unknown";
 
@@ -91,5 +98,22 @@ export function buildWarnToastBody(args: {
     message: `Agent: ${resolvedAgent}\nSession: ${sessionLabel}\nIdle: ${toIdleSeconds(args.idleMs)}s\nLast part: ${normalizeLastPartKind(args.lastPartKind)}\nEsc to interrupt · ask Huginn "kill ${resolvedAgent}" for selective abort`,
     variant: "warning",
     duration: 0,
+  };
+}
+
+export function buildResumeToastBody(args: {
+  sessionID: string;
+  slug: string | null | undefined;
+  agent: string | null | undefined;
+  resumedAfterMs: number;
+}): ResumeToastBody {
+  const resolvedAgent = normalizeAgent(args.agent);
+  const sessionLabel = normalizeSessionLabel(args.slug, args.sessionID);
+
+  return {
+    title: "▶ Stream recovered",
+    message: `${resolvedAgent} · ${sessionLabel} · resumed after ${toIdleSeconds(args.resumedAfterMs)}s`,
+    variant: "success",
+    duration: 4000,
   };
 }
