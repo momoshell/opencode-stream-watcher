@@ -14,7 +14,15 @@ export type IncidentLogEntry = {
   };
 };
 
+export type WarnToastBody = {
+  title: "⏸ Stream stalled";
+  message: string;
+  variant: "warning";
+  duration: 0;
+};
+
 export const UNKNOWN_LAST_PART_KIND = "unknown";
+export const UNKNOWN_AGENT = "unknown";
 
 export function toIdleSeconds(idleMs: number): number {
   return Math.max(0, Math.floor(idleMs / 1000));
@@ -26,6 +34,22 @@ export function normalizeLastPartKind(lastPartKind: string | null | undefined): 
   }
 
   return lastPartKind;
+}
+
+export function normalizeAgent(agent: string | null | undefined): string {
+  if (!agent || agent.trim().length === 0) {
+    return UNKNOWN_AGENT;
+  }
+
+  return agent;
+}
+
+function normalizeSessionLabel(slug: string | null | undefined, sessionID: string): string {
+  if (slug && slug.trim().length > 0) {
+    return slug;
+  }
+
+  return sessionID;
 }
 
 export function incidentLevelFor(stage: IncidentStage): IncidentLevel {
@@ -49,5 +73,23 @@ export function buildIncidentLogEntry(args: {
       idleSeconds: toIdleSeconds(args.idleMs),
       lastPartKind: normalizeLastPartKind(args.lastPartKind),
     },
+  };
+}
+
+export function buildWarnToastBody(args: {
+  sessionID: string;
+  slug: string | null | undefined;
+  agent: string | null | undefined;
+  idleMs: number;
+  lastPartKind: string | null | undefined;
+}): WarnToastBody {
+  const resolvedAgent = normalizeAgent(args.agent);
+  const sessionLabel = normalizeSessionLabel(args.slug, args.sessionID);
+
+  return {
+    title: "⏸ Stream stalled",
+    message: `Agent: ${resolvedAgent}\nSession: ${sessionLabel}\nIdle: ${toIdleSeconds(args.idleMs)}s\nLast part: ${normalizeLastPartKind(args.lastPartKind)}\nEsc to interrupt · ask Huginn "kill ${resolvedAgent}" for selective abort`,
+    variant: "warning",
+    duration: 0,
   };
 }

@@ -10,7 +10,12 @@ import {
   type SessionMetadata,
   updateSessionMetadata,
 } from "./state.js";
-import { buildIncidentLogEntry, type IncidentStage } from "./notify.js";
+import {
+  buildIncidentLogEntry,
+  buildWarnToastBody,
+  normalizeAgent,
+  type IncidentStage,
+} from "./notify.js";
 import type { StallTransition, TrackedSession, WatchdogConfig } from "./types.js";
 
 const SERVICE = "stream-watchdog";
@@ -149,18 +154,18 @@ function createConfigLogger(client: PluginClient): ConfigLogger {
 function startTickLoop(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
-  config: Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log">,
+  config: Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log" | "toast">,
 ): void {
   stopTickLoop();
 
   const interval = globalThis.setInterval(() => {
     const transitions = scanTrackedSessions(trackedSessions, config);
 
-    if (!config.log || transitions.length === 0) {
+    if (transitions.length === 0 || (!config.log && !config.toast)) {
       return;
     }
 
-    void logTickTransitions(client, transitions).catch(() => undefined);
+    void emitTickTransitions(client, transitions, config).catch(() => undefined);
   }, config.tickMs);
 
   activeTickLoop = { interval };
@@ -203,18 +208,31 @@ async function getSessionMetadata(
   }
 }
 
-async function logTickTransitions(
+async function emitTickTransitions(
   client: PluginClient,
   transitions: StallTransition[],
+  config: Pick<WatchdogConfig, "log" | "toast">,
 ): Promise<void> {
   for (const transition of transitions) {
-    await safeLog(client, buildIncidentLogEntry({
-      stage: toIncidentStage(transition),
-      sessionID: transition.sessionID,
-      agent: transition.tracked.agent ?? "unknown",
-      idleMs: transition.idleMs,
-      lastPartKind: transition.tracked.lastPartKind,
-    }));
+    if (config.log) {
+      await safeLog(client, buildIncidentLogEntry({
+        stage: toIncidentStage(transition),
+        sessionID: transition.sessionID,
+        agent: normalizeAgent(transition.tracked.agent),
+        idleMs: transition.idleMs,
+        lastPartKind: transition.tracked.lastPartKind,
+      }));
+    }
+
+    if (config.toast && transition.to === "warned") {
+      await safeToast(client, buildWarnToastBody({
+        sessionID: transition.sessionID,
+        slug: transition.tracked.slug,
+        agent: transition.tracked.agent,
+        idleMs: transition.idleMs,
+        lastPartKind: transition.tracked.lastPartKind,
+      }));
+    }
   }
 }
 
@@ -242,6 +260,22 @@ async function safeLog(
     await client.app.log({ body });
   } catch {
     // Logging is best-effort and must never interrupt plugin behavior.
+  }
+}
+
+async function safeToast(
+  client: PluginClient,
+  body: {
+    title?: string;
+    message: string;
+    variant: "warning";
+    duration?: number;
+  },
+): Promise<void> {
+  try {
+    await client.tui.showToast({ body });
+  } catch {
+    // Toasts are best-effort and must never interrupt plugin behavior.
   }
 }
 
