@@ -35,3 +35,12 @@ export interface StallTransition {
   idleMs: number;
   tracked: TrackedSession;
 }
+
+export type WatchdogEventType = "WARN" | "RESUME" | "ABORT";
+
+export interface RecentWatchdogEvent {
+  time: number;
+  type: WatchdogEventType;
+  sessionID: string;
+  agent: string;
+}

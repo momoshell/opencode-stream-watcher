@@ -17,7 +17,16 @@ import {
   normalizeAgent,
   type IncidentStage,
 } from "./notify.js";
-import type { StallTransition, TrackedSession, WatchdogConfig } from "./types.js";
+import {
+  createWatchdogStatusTool,
+  recordRecentWatchdogTransitions,
+} from "./tools.js";
+import type {
+  RecentWatchdogEvent,
+  StallTransition,
+  TrackedSession,
+  WatchdogConfig,
+} from "./types.js";
 
 const SERVICE = "stream-watchdog";
 type PluginClient = Parameters<Plugin>[0]["client"];
@@ -30,12 +39,13 @@ let activeTickLoop: ActiveTickLoop | undefined;
 
 export const StreamWatchdog: Plugin = async ({ project, client, directory, worktree }) => {
   const trackedSessions = createTrackedSessions();
+  const recentEvents: RecentWatchdogEvent[] = [];
   const config = await loadWatchdogConfig({
     projectRoot: deriveProjectRoot(project, directory, worktree),
     logger: createConfigLogger(client),
   });
 
-  startTickLoop(client, trackedSessions, config);
+  startTickLoop(client, trackedSessions, recentEvents, config);
 
   await safeLog(client, {
     service: SERVICE,
@@ -44,6 +54,9 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
   });
 
   return {
+    tool: {
+      watchdog_status: createWatchdogStatusTool({ trackedSessions, recentEvents }),
+    },
     event: async ({ event }) => {
       switch (event.type) {
         case "session.status": {
@@ -173,6 +186,7 @@ function createConfigLogger(client: PluginClient): ConfigLogger {
 function startTickLoop(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
+  recentEvents: RecentWatchdogEvent[],
   config: Pick<
     WatchdogConfig,
     "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log" | "toast" | "perAgent"
@@ -183,7 +197,13 @@ function startTickLoop(
   const interval = globalThis.setInterval(() => {
     const transitions = scanTrackedSessions(trackedSessions, config);
 
-    if (transitions.length === 0 || (!config.log && !config.toast)) {
+    if (transitions.length === 0) {
+      return;
+    }
+
+    recordRecentWatchdogTransitions(recentEvents, transitions);
+
+    if (!config.log && !config.toast) {
       return;
     }
 
