@@ -61,7 +61,21 @@ To reproduce a stall, follow [`scripts/stall-fixture.md`](scripts/stall-fixture.
 
 ## Releases
 
-Maintainer-only. Tag `vX.Y.Z` on `main`; the `release.yml` workflow publishes to npm. Requires `NPM_TOKEN` secret configured at the repo level.
+Maintainer-only.
+
+Prerequisites:
+
+- The release commit is already on `main`.
+- The repo-level `NPM_TOKEN` secret is configured for the GitHub Actions publish step.
+- Maintainer approval is given before pushing the first release tag (`v0.1.0`).
+
+Release flow:
+
+1. Confirm the release commit and docs are merged to `main`.
+2. Create and push a tag in `vX.Y.Z` format from `main` (for this release: `v0.1.0`).
+3. GitHub Actions runs `release.yml` and publishes to npm.
+
+Do not claim the npm token can be verified locally; publication depends on the repo secret in GitHub.
 
 ## Reporting issues
 
