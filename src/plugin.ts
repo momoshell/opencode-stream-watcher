@@ -18,6 +18,7 @@ import {
   type IncidentStage,
 } from "./notify.js";
 import {
+  createWatchdogAbortTool,
   createWatchdogStatusTool,
   recordRecentWatchdogTransitions,
 } from "./tools.js";
@@ -55,6 +56,22 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
 
   return {
     tool: {
+      watchdog_abort: createWatchdogAbortTool({
+        trackedSessions,
+        abortSession: async (sessionID) => {
+          const response = await client.session.abort({ path: { id: sessionID } });
+          return response.data === true;
+        },
+        logAbort: async ({ result, lastPartKind }) => {
+          await safeLog(client, buildIncidentLogEntry({
+            stage: "ABORT",
+            sessionID: result.sessionID,
+            agent: normalizeAgent(result.agent),
+            idleMs: result.idleMs,
+            lastPartKind,
+          }));
+        },
+      }),
       watchdog_status: createWatchdogStatusTool({ trackedSessions, recentEvents }),
     },
     event: async ({ event }) => {

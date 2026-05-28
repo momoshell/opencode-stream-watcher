@@ -40,6 +40,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      perAgent: {},
     });
     expect(warnings).toEqual([]);
   });
@@ -75,6 +76,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 15_000,
       toast: false,
       log: true,
+      perAgent: {},
     });
   });
 
@@ -114,6 +116,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      perAgent: {},
     });
     expect(warnings.length).toBe(6);
   });
@@ -152,6 +155,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      perAgent: {},
     });
     expect(warnings.length).toBe(2);
   });
@@ -178,6 +182,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      perAgent: {},
     });
 
     const unreadableConfig = await loadWatchdogConfig({
@@ -194,6 +199,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      perAgent: {},
     });
     expect(warnings.length).toBe(2);
   });

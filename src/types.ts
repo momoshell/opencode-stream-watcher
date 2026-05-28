@@ -44,3 +44,10 @@ export interface RecentWatchdogEvent {
   sessionID: string;
   agent: string;
 }
+
+export interface WatchdogAbortResult {
+  aborted: boolean;
+  sessionID: string;
+  agent?: string;
+  idleMs: number;
+}
