@@ -127,6 +127,10 @@ function scanTrackedSession(
 
   switch (tracked.state) {
     case "tracking":
+      if (shouldAbort(config.abortThresholdMs, idleMs)) {
+        return transitionSession(tracked, "aborted", now, idleMs);
+      }
+
       if (idleMs < config.warnThresholdMs) {
         return undefined;
       }
@@ -134,23 +138,23 @@ function scanTrackedSession(
       return transitionSession(tracked, "warned", now, idleMs);
 
     case "warned":
+      if (shouldAbort(config.abortThresholdMs, idleMs)) {
+        return transitionSession(tracked, "aborted", now, idleMs);
+      }
+
       if (shouldRearmTracking(tracked, config.warnThresholdMs, now, idleMs)) {
         return transitionSession(tracked, "tracking", now, idleMs);
       }
 
-      if (config.abortThresholdMs <= 0) {
-        return undefined;
-      }
-
-      if (idleMs < config.abortThresholdMs) {
-        return undefined;
-      }
-
-      return transitionSession(tracked, "aborted", now, idleMs);
+      return undefined;
 
     case "aborted":
       return undefined;
   }
+}
+
+function shouldAbort(abortThresholdMs: number, idleMs: number): boolean {
+  return abortThresholdMs > 0 && idleMs >= abortThresholdMs;
 }
 
 function resolveThresholds(

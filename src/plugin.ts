@@ -11,6 +11,7 @@ import {
   updateSessionMetadata,
 } from "./state.js";
 import {
+  buildAbortToastBody,
   buildIncidentLogEntry,
   buildResumeToastBody,
   buildWarnToastBody,
@@ -58,10 +59,7 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
     tool: {
       watchdog_abort: createWatchdogAbortTool({
         trackedSessions,
-        abortSession: async (sessionID) => {
-          const response = await client.session.abort({ path: { id: sessionID } });
-          return response.data === true;
-        },
+        abortSession: (sessionID) => abortSession(client, sessionID),
         logAbort: async ({ result, lastPartKind }) => {
           await safeLog(client, buildIncidentLogEntry({
             stage: "ABORT",
@@ -220,10 +218,6 @@ function startTickLoop(
 
     recordRecentWatchdogTransitions(recentEvents, transitions);
 
-    if (!config.log && !config.toast) {
-      return;
-    }
-
     void emitTickTransitions(client, transitions, config).catch(() => undefined);
   }, config.tickMs);
 
@@ -273,6 +267,13 @@ async function emitTickTransitions(
   config: Pick<WatchdogConfig, "log" | "toast">,
 ): Promise<void> {
   for (const transition of transitions) {
+    if (transition.to === "aborted") {
+      const aborted = await abortSession(client, transition.sessionID);
+      if (!aborted) {
+        continue;
+      }
+    }
+
     if (config.log) {
       await safeLog(client, buildIncidentLogEntry({
         stage: toIncidentStage(transition),
@@ -292,6 +293,24 @@ async function emitTickTransitions(
         lastPartKind: transition.tracked.lastPartKind,
       }));
     }
+
+    if (config.toast && transition.to === "aborted") {
+      await safeToast(client, buildAbortToastBody({
+        sessionID: transition.sessionID,
+        slug: transition.tracked.slug,
+        agent: transition.tracked.agent,
+        idleMs: transition.idleMs,
+      }));
+    }
+  }
+}
+
+async function abortSession(client: PluginClient, sessionID: string): Promise<boolean> {
+  try {
+    const response = await client.session.abort({ path: { id: sessionID } });
+    return response.data === true;
+  } catch {
+    return false;
   }
 }
 
@@ -327,7 +346,7 @@ async function safeToast(
   body: {
     title?: string;
     message: string;
-    variant: "warning" | "success";
+    variant: "warning" | "success" | "error";
     duration?: number;
   },
 ): Promise<void> {
