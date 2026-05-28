@@ -99,7 +99,12 @@ All keys optional; defaults shown:
     "abortThresholdMs": 0,
     "tickMs": 10000,
     "toast": true,
-    "log": true
+    "log": true,
+    "duration": {
+      "enabled": true,
+      "minToastMs": 5000,
+      "slowToastMs": 30000
+    }
   }
 }
 ```
@@ -111,7 +116,10 @@ All keys optional; defaults shown:
 | `tickMs` | `10000` | How often the watchdog checks tracked sessions |
 | `toast` | `true` | Show TUI toasts |
 | `log` | `true` | Write structured log entries via `client.app.log` |
-| `perAgent` | `{}` | Override `warnThresholdMs` and `abortThresholdMs` by exact agent name |
+| `duration.enabled` | `true` | Emit turn-duration logs and end-of-turn toasts |
+| `duration.minToastMs` | `5000` | Only show a turn-done toast when a turn takes at least this long |
+| `duration.slowToastMs` | `30000` | Upgrade the toast to slow-turn warning styling at or above this duration |
+| `perAgent` | `{}` | Override stall thresholds and nested duration toast thresholds by exact agent name |
 
 ### Per-agent thresholds
 
@@ -134,7 +142,39 @@ All keys optional; defaults shown:
 }
 ```
 
-Use `perAgent` when one agent class naturally runs quieter or should auto-abort sooner. Only `warnThresholdMs` and `abortThresholdMs` can be overridden per agent.
+Use `perAgent` when one agent class naturally runs quieter, should auto-abort sooner, or needs different duration toast thresholds.
+
+### Turn-duration reporting
+
+By default the plugin logs completed turns as `TURN_DURATION` and shows an info toast (`⌛ Turn done`) for turns that take at least 5s. At 30s or above, that toast becomes a warning (`⌛ Turn done · slow`).
+
+```json
+{
+  "stream-watchdog": {
+    "duration": {
+      "enabled": true,
+      "minToastMs": 5000,
+      "slowToastMs": 30000
+    },
+    "perAgent": {
+      "code-reviewer-deep": {
+        "duration": {
+          "minToastMs": 15000,
+          "slowToastMs": 60000
+        }
+      },
+      "doc-writer": {
+        "duration": {
+          "minToastMs": 3000,
+          "slowToastMs": 20000
+        }
+      }
+    }
+  }
+}
+```
+
+Per-agent duration overrides support `minToastMs` and `slowToastMs` only. `duration.enabled` is global.
 
 ### Auto-abort is opt-in
 
@@ -164,7 +204,7 @@ Example `watchdog_status` response:
 stream-watchdog: tracking 2 sessions.
 Tracked sessions:
 - sessionID=ses_1a16c8b9 agent=backend-specialist slug=ses_1a16… idleMs=95000 lastPartKind=reasoning state=warned
-- sessionID=ses_7bc2f41e agent=doc-writer slug=ses_7bc2… idleMs=12000 lastPartKind=text state=tracking
+- sessionID=ses_7bc2f41e agent=doc-writer slug=ses_7bc2… idleMs=12000 lastPartKind=text lastTurnMs=8400 state=tracking
 
 Recent events (oldest → newest):
 - time=2026-05-28T14:01:35.000Z type=WARN sessionID=ses_1a16c8b9 agent=backend-specialist
@@ -181,8 +221,6 @@ Example `watchdog_abort` result:
   "idleMs": 95000
 }
 ```
-
-Turn-duration reporting/config is still pending and intentionally not documented here yet.
 
 ## Reaction paths
 
@@ -220,7 +258,7 @@ Details and the *why* behind each decision: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 - **v0.1 — Notify-only**: WARN + RESUME toasts, structured logs, safe defaults.
 - **v0.2 — Selective control** *(current)*: per-agent thresholds, `watchdog_status` + `watchdog_abort`, opt-in auto-abort.
-- **Later v0.2.x**: turn-duration reporting/config once the remaining dependency lands.
+- **Later v0.2.x**: more turn-duration tuning based on real-world usage.
 - **v1.0 — Trusted defaults**: stats counters, empirical threshold guidance, auto-abort default-on.
 
 Why the milestones look this way and what gates a default change → [`docs/DESIGN.md` § Versioning](docs/DESIGN.md#versioning). Live tracking on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).

@@ -170,6 +170,7 @@ function trackedSession(input: {
   return {
     sessionID: input.sessionID,
     agent: input.agent,
+    callStart: input.lastActivity,
     lastActivity: input.lastActivity,
     state: "tracking",
     stateSince: input.lastActivity,

@@ -1,6 +1,7 @@
 import type { Part } from "@opencode-ai/sdk";
 
 import type {
+  DurationConfig,
   LastPartKind,
   StallTransition,
   TrackedSession,
@@ -14,6 +15,10 @@ export interface SessionMetadata {
   slug?: string;
 }
 
+export interface StartTrackingOptions {
+  lastTurnMs?: number;
+}
+
 export function createTrackedSessions(): Map<string, TrackedSession> {
   return new Map<string, TrackedSession>();
 }
@@ -23,12 +28,15 @@ export function startTracking(
   sessionID: string,
   metadata: SessionMetadata = {},
   now = Date.now(),
+  options: StartTrackingOptions = {},
 ): TrackedSession {
   const tracked: TrackedSession = {
     sessionID,
     agent: metadata.agent,
     slug: metadata.slug,
+    callStart: now,
     lastActivity: now,
+    lastTurnMs: options.lastTurnMs,
     resumeStartedAt: undefined,
     state: "tracking",
     stateSince: now,
@@ -36,6 +44,23 @@ export function startTracking(
 
   sessions.set(sessionID, tracked);
   return tracked;
+}
+
+export function resolveDurationConfig(
+  tracked: TrackedSession,
+  config: Pick<WatchdogConfig, "duration" | "perAgent">,
+): DurationConfig {
+  const agent = tracked.agent;
+  if (agent === undefined) {
+    return { ...config.duration };
+  }
+
+  const override = config.perAgent[agent]?.duration;
+  return {
+    enabled: config.duration.enabled,
+    minToastMs: override?.minToastMs ?? config.duration.minToastMs,
+    slowToastMs: override?.slowToastMs ?? config.duration.slowToastMs,
+  };
 }
 
 export function recordPartActivity(
@@ -226,9 +251,11 @@ function snapshotTrackedSession(tracked: TrackedSession): TrackedSession {
     sessionID: tracked.sessionID,
     agent: tracked.agent,
     slug: tracked.slug,
+    callStart: tracked.callStart,
     lastActivity: tracked.lastActivity,
     resumeStartedAt: tracked.resumeStartedAt,
     lastPartKind: tracked.lastPartKind,
+    lastTurnMs: tracked.lastTurnMs,
     state: tracked.state,
     stateSince: tracked.stateSince,
   };

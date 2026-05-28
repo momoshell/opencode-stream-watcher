@@ -4,6 +4,7 @@ import { loadWatchdogConfig, type ConfigLogger } from "./config.js";
 import {
   createTrackedSessions,
   recordPartActivity,
+  resolveDurationConfig,
   scanTrackedSessions,
   startTracking,
   stopTracking,
@@ -14,6 +15,8 @@ import {
   buildAbortToastBody,
   buildIncidentLogEntry,
   buildResumeToastBody,
+  buildTurnDurationLogEntry,
+  buildTurnDurationToastBody,
   buildWarnToastBody,
   normalizeAgent,
   type IncidentStage,
@@ -41,6 +44,7 @@ let activeTickLoop: ActiveTickLoop | undefined;
 
 export const StreamWatchdog: Plugin = async ({ project, client, directory, worktree }) => {
   const trackedSessions = createTrackedSessions();
+  const lastTurnMsBySession = new Map<string, number>();
   const recentEvents: RecentWatchdogEvent[] = [];
   const config = await loadWatchdogConfig({
     projectRoot: deriveProjectRoot(project, directory, worktree),
@@ -80,7 +84,9 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
           }
 
           const sessionID = event.properties.sessionID;
-          const tracked = startTracking(trackedSessions, sessionID);
+          const tracked = startTracking(trackedSessions, sessionID, {}, Date.now(), {
+            lastTurnMs: lastTurnMsBySession.get(sessionID),
+          });
           void enrichSessionMetadata(client, trackedSessions, sessionID);
 
           await safeLog(client, buildIncidentLogEntry({
@@ -121,7 +127,13 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
         }
 
         case "session.idle": {
-          stopTracking(trackedSessions, event.properties.sessionID);
+          await handleSessionIdle(
+            client,
+            trackedSessions,
+            lastTurnMsBySession,
+            event.properties.sessionID,
+            config,
+          );
           return;
         }
 
@@ -131,7 +143,9 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
         }
 
         case "session.deleted": {
-          stopTracking(trackedSessions, event.properties.info.id);
+          const sessionID = event.properties.info.id;
+          stopTracking(trackedSessions, sessionID);
+          lastTurnMsBySession.delete(sessionID);
           return;
         }
 
@@ -157,6 +171,49 @@ function deriveProjectRoot(project: unknown, directory: unknown, worktree: unkno
   }
 
   return process.cwd();
+}
+
+async function handleSessionIdle(
+  client: PluginClient,
+  trackedSessions: Map<string, TrackedSession>,
+  lastTurnMsBySession: Map<string, number>,
+  sessionID: string | undefined,
+  config: Pick<WatchdogConfig, "duration" | "log" | "toast" | "perAgent">,
+): Promise<void> {
+  if (!sessionID) {
+    return;
+  }
+
+  const tracked = trackedSessions.get(sessionID);
+  if (!tracked) {
+    stopTracking(trackedSessions, sessionID);
+    return;
+  }
+
+  const durationMs = Math.max(0, Date.now() - tracked.callStart);
+  tracked.lastTurnMs = durationMs;
+  lastTurnMsBySession.set(sessionID, durationMs);
+
+  const durationConfig = resolveDurationConfig(tracked, config);
+  if (durationConfig.enabled) {
+    if (config.log) {
+      await safeLog(client, buildTurnDurationLogEntry({
+        sessionID: tracked.sessionID,
+        agent: tracked.agent,
+        durationMs,
+      }));
+    }
+
+    if (config.toast && durationMs >= durationConfig.minToastMs) {
+      await safeToast(client, buildTurnDurationToastBody({
+        agent: tracked.agent,
+        durationMs,
+        slow: durationMs >= durationConfig.slowToastMs,
+      }));
+    }
+  }
+
+  stopTracking(trackedSessions, sessionID);
 }
 
 function readProjectRoot(project: unknown): string | undefined {
@@ -346,7 +403,7 @@ async function safeToast(
   body: {
     title?: string;
     message: string;
-    variant: "warning" | "success" | "error";
+    variant: "info" | "warning" | "success" | "error";
     duration?: number;
   },
 ): Promise<void> {
