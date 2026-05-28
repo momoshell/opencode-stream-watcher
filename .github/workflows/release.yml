@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -42,6 +43,14 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Set up Node for Trusted Publishing
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+
+      - name: Upgrade npm for Trusted Publishing
+        run: npm install --global npm@11.5.1
+
       - name: Verify tagged commit is on main
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
@@ -50,13 +59,6 @@ jobs:
             printf 'Tagged commit %s is not contained in origin/main\n' "${GITHUB_SHA}" >&2
             exit 1
           fi
-
-      - name: Configure npm authentication
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${HOME}/.npmrc"
-          printf 'registry=https://registry.npmjs.org/\n' >> "${HOME}/.npmrc"
 
       - name: Publish package
         run: npm publish --ignore-scripts
