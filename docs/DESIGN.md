@@ -28,7 +28,7 @@ This is **not** a prompt-design failure (no narration loop, no @agent conflict, 
 
 It's a runtime/transport problem. The fix has to live at the runtime layer.
 
-## API surface available
+## Plugin API surface
 
 We investigated the opencode plugin API (`@opencode-ai/plugin`) and SDK (`@opencode-ai/sdk`). The relevant exposed surfaces:
 
@@ -51,15 +51,20 @@ export const StreamWatchdog: Plugin = async (ctx) => {
 | `session.error` | `{ sessionID, error }` | Stop tracking — already failed |
 | `session.deleted` | `{ info.id }` | Clean up |
 
-### Client methods we call
+### Client methods currently used
 
 | Method | Purpose |
 |---|---|
 | `client.tui.showToast({ body: { title, message, variant, duration } })` | TUI toast notifications |
 | `client.app.log({ body: { service, level, message } })` | Structured logging into opencode's log stream |
-| `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel |
 
-This is exactly the surface needed: a chunk-level heartbeat we can timestamp, structured logging for incident history, and an abort method for the (eventual) auto-recovery.
+### Client methods relevant for future versions
+
+| Method | Planned use |
+|---|---|
+| `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel for selective abort / auto-abort work in v0.2+ / v1.0 |
+
+v0.1 uses the heartbeat events plus best-effort toasts and structured logs. The abort API exists, but the current source does not call it yet.
 
 ## Architecture
 
@@ -91,14 +96,13 @@ This is exactly the surface needed: a chunk-level heartbeat we can timestamp, st
                 ┌───────────────────┼───────────────────┐
                 ▼                   ▼                   ▼
         ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-        │ WARN toast   │    │ RESUME toast │    │ ABORT toast  │
-        │ + app.log    │    │ + app.log    │    │ + app.log    │
-        │              │    │              │    │ + session    │
-        │              │    │              │    │   .abort()   │
+        │ WARN toast   │    │ RESUME toast │    │ ABORT log    │
+        │ + app.log    │    │ + app.log    │    │ (state only  │
+        │              │    │              │    │  in v0.1)    │
         └──────────────┘    └──────────────┘    └──────────────┘
 ```
 
-> ℹ️ WARN, RESUME, and ABORT each fire **at most once per stall window** — the tick loop gates them via the per-session state machine below. See [UX § De-duplication rules](#de-duplication-rules) for the exact gating.
+> ℹ️ WARN, RESUME, and ABORT state transitions each fire **at most once per stall window**. In v0.1, WARN and RESUME can surface as toasts and logs; ABORT currently surfaces as a log-stage transition only.
 
 State machine per tracked session:
 
@@ -123,31 +127,31 @@ Alternatives considered:
 
 The earlier safeguard option ("external log-tailer") would work but has worse ergonomics: it lives outside opencode, can't render toasts, can't call `session.abort`. The plugin path gives us the real TUI surface and the SDK actions in-process.
 
-### Turn duration as a free side effect *(v0.2+)*
+### Current state machine details
 
-Once the plugin is subscribed to `session.status`, computing per-turn duration is essentially free: record `callStart` when status goes `busy`, compute `now - callStart` when `session.idle` fires. opencode's bus only emits `session.idle` at the end of a turn (one prompt → many internal LLM steps → one idle), so the cadence is one toast per agent response — not per inner step.
-
-This piggybacks on the existing event hook without separate timer infrastructure. It also produces the empirical duration data we need for per-agent threshold tuning in v0.2 and for the statistical guidance in v1.0.
-
-Live "running for Xs…" indicators are explicitly out of scope: opencode toasts are fire-and-forget (no toast ID in `TuiShowToastData`), so we can't update a shown toast in place. Post-hoc display is what the API supports, and that's what users actually need — knowing how long the *previous* turn took is what informs the next decision.
+- Tracking starts when `session.status` becomes `busy`.
+- Heartbeats come from `message.part.updated`; each event refreshes `lastActivity` and may capture `lastPartKind` (`text`, `reasoning`, or `tool`).
+- The plugin keeps one module-level `setInterval` and scans the tracked-session map every `tickMs`.
+- WARN triggers once `idleMs >= warnThresholdMs`.
+- After WARN, a session only re-arms once there has been more than 30 seconds of resumed activity and the session is no longer past the WARN threshold.
+- If `abortThresholdMs > 0`, the state machine can transition from `warned` to `aborted`; in v0.1 that produces an `ABORT` incident log stage but does **not** call `client.session.abort()`.
 
 ## UX
 
 ### Toast shapes
 
-| State | Variant | Title | Duration | Message hint |
+| State | Variant | Title | Duration | Current behavior |
 |---|---|---|---|---|
-| WARN | warning | `⏸ Stream stalled` | 0 (sticky) | `<agent> · <slug> · silent for Xs (last: <part-kind>). Esc to interrupt · ask your foreground agent to kill it for selective abort.` |
-| RESUME | success | `▶ Stream recovered` | 4000ms | `<agent> · <slug> · resumed after Xs.` |
-| ABORT | error | `🛑 Aborted stalled stream` | 8000ms | `<agent> · <slug> · Xs silent → auto-aborted. Parent will see error.` |
-| TURN-DONE *(v0.2+)* | info | `⌛ Turn done` | 3000ms | `<agent> · <duration>` — fires when a session goes `idle` if elapsed ≥ `duration.minToastMs` |
-| TURN-DONE-SLOW *(v0.2+)* | warning | `⌛ Turn done · slow` | 5000ms | `<agent> · <duration>` — same trigger as TURN-DONE but elapsed ≥ `duration.slowToastMs` |
+| WARN | warning | `⏸ Stream stalled` | 0 (sticky) | Toast body includes agent, session label, idle seconds, last part kind, and the Esc / Huginn selective-abort hint. |
+| RESUME | success | `▶ Stream recovered` | 4000ms | Toast body is `<agent> · <slug-or-sessionID> · resumed after <Xs>`. |
+| ABORT | n/a in v0.1 UI | n/a | n/a | No ABORT toast is implemented today; only the `ABORT` incident log stage exists. |
+| Selective abort *(v0.2+)* | tbd | tbd | tbd | Planned once a tool or other UI path actually calls `client.session.abort()`. |
 
 ### De-duplication rules
 
 - One WARN per stall window. After WARN, re-arm only after >30s of resumed activity, then the next stall can trigger a fresh WARN.
 - RESUME fires only if a WARN preceded it in the same session lifetime.
-- ABORT fires only when `abortThresholdMs > 0` AND the session is already in `warned` state.
+- ABORT state transitions only when `abortThresholdMs > 0` and the session is already in `warned` state; in v0.1 this is logged but not acted on with a programmatic cancel.
 
 ### Why Esc, not Ctrl+C
 
@@ -158,11 +162,13 @@ opencode's keybinding system treats `esc` as the interrupt key (`escape:"esc"` i
 | Path | When | Mechanism |
 |---|---|---|
 | Esc cascade | Single active delegation stalls | User hits Esc — opencode's TUI interrupt key. In observed setups (e.g., Muninn → backend-specialist), this reaches the active subagent and the parent sees `error=Aborted process`, handled per its existing no-op verification protocol. |
-| `watchdog_abort` tool *(v0.2+)* | Parallel delegations where only one is stuck | Foreground agent (e.g., Huginn, Muninn, or any primary in the user's setup) calls `watchdog_abort(sessionID)`; plugin invokes `client.session.abort()` on just that one. |
-| `watchdog_status` tool *(v0.2+)* | Before deciding to kill | Lists tracked sessions with idle times and last-part-kind. Helps the user judge "real stall" vs "long reasoning." |
+| `watchdog_abort` tool *(v0.2+)* | Parallel delegations where only one is stuck | Planned: foreground agent calls `watchdog_abort(sessionID)` and the plugin cancels just that one session. |
+| `watchdog_status` tool *(v0.2+)* | Before deciding to kill | Planned: list tracked sessions with idle times and last-part kind to help judge "real stall" vs "long reasoning." |
 | `read_session` (via opencode-handoff plugin) | Forensic | If the user has `opencode-handoff` installed, ask the foreground agent to read the stuck subagent's transcript so far. |
-| Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms) or abort fires. |
+| Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms). Planned v0.2+ behavior may optionally abort later if configured. |
 | Restart opencode | Esc didn't propagate | Nuclear, rare. Documented in README, not engineered around. |
+
+In short: v0.1's real recovery path is operator-driven. The plugin detects, logs, and warns; the user or foreground agent decides what to do next.
 
 ## Distribution
 
@@ -176,9 +182,9 @@ opencode auto-resolves from npm at startup and caches in `~/.cache/opencode/node
 
 ### Versioning
 
-- `0.1.x` — notify-only, no abort default. Safe to install blind.
-- `0.2.x` — adds tools and per-agent config. Still notify-only by default.
-- `1.0.0` — flips `abortThresholdMs` default to `600000` after dogfood validation. Breaking-default change documented prominently.
+- `0.1.x` — current implemented shape: one tick loop, WARN/RESUME toasts, structured logs, config-driven thresholds, no programmatic abort call.
+- `0.2.x` — planned: tools such as `watchdog_status` / `watchdog_abort`, plus selective-abort UX built on top of the existing tracked-session state.
+- `1.0.0` — planned: consider an auto-abort default only after enough dogfood confidence that false positives are rare and understandable.
 
 ### Maintenance
 
@@ -186,10 +192,20 @@ The plugin depends on a stable subset of the opencode API: `message.part.updated
 
 If opencode ships a built-in stream-idle timeout, this plugin becomes redundant. That's fine — the goal is solving the problem, not maintaining a moat.
 
+## Log signature
+
+The structured log stream is the durable incident trail. Current stages are:
+
+- `tracking-start` when a session first goes `busy`
+- `WARN` when idle time crosses the warn threshold
+- `RESUME` when post-WARN activity returns and the session re-arms
+- `ABORT` when the state machine crosses the abort threshold
+
+Each log entry includes `sessionID`, `agent`, `idleSeconds`, and `lastPartKind`. This is the signature contributors should preserve when adjusting behavior.
+
 ## Open questions
 
-These are not blockers; they'll resolve during v0.1 dogfood.
+These are future-version questions, not blockers for the current v0.1 design:
 
-1. **How does the parent session experience a `client.session.abort()` of its delegated child?** We've observed user-initiated Esc cascade producing a clean `error=Aborted process` on both parent and child. Programmatic abort *should* produce the same shape. v0.2 issue #17 explicitly verifies this.
-2. **What threshold for "resumed activity" before re-arming WARN?** Current plan: >30s of fresh deltas. May need tuning. Issue #21 (stats counters) will give us data.
-3. **Does `message.part.updated` fire for every reasoning token, or only on part-state changes?** To be verified during issue #3 by tailing the bus during a session with active reasoning. If only state changes, we'll also subscribe to `message.part.delta` (visible in the SDK type union) for finer-grained heartbeat. The fallback path is cheap to add, so this question doesn't gate v0.1 — it just shapes #3's implementation.
+1. **How should programmatic abort surface to the parent session?** Esc cascade behavior is known; `client.session.abort()` behavior still needs explicit verification before selective abort ships.
+2. **Is the 30s re-arm window the right trade-off?** It prevents WARN spam after brief recoveries, but may still need tuning with real-world usage.
