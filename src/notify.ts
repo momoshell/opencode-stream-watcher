@@ -28,6 +28,13 @@ export type ResumeToastBody = {
   duration: 4000;
 };
 
+export type AbortToastBody = {
+  title: "🛑 Aborted stalled stream";
+  message: string;
+  variant: "error";
+  duration: 8000;
+};
+
 export const UNKNOWN_LAST_PART_KIND = "unknown";
 export const UNKNOWN_AGENT = "unknown";
 
@@ -115,5 +122,22 @@ export function buildResumeToastBody(args: {
     message: `${resolvedAgent} · ${sessionLabel} · resumed after ${toIdleSeconds(args.resumedAfterMs)}s`,
     variant: "success",
     duration: 4000,
+  };
+}
+
+export function buildAbortToastBody(args: {
+  sessionID: string;
+  slug: string | null | undefined;
+  agent: string | null | undefined;
+  idleMs: number;
+}): AbortToastBody {
+  const resolvedAgent = normalizeAgent(args.agent);
+  const sessionLabel = normalizeSessionLabel(args.slug, args.sessionID);
+
+  return {
+    title: "🛑 Aborted stalled stream",
+    message: `${resolvedAgent} · ${sessionLabel} · aborted after ${toIdleSeconds(args.idleMs)}s`,
+    variant: "error",
+    duration: 8000,
   };
 }
