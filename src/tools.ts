@@ -1,9 +1,11 @@
 import { tool } from "@opencode-ai/plugin";
 
 import type {
+  LastPartKind,
   RecentWatchdogEvent,
   StallTransition,
   TrackedSession,
+  WatchdogAbortResult,
   WatchdogEventType,
 } from "./types.js";
 
@@ -12,6 +14,29 @@ const MAX_RECENT_EVENTS = 10;
 interface WatchdogStatusToolInput {
   trackedSessions: ReadonlyMap<string, TrackedSession>;
   recentEvents: readonly RecentWatchdogEvent[];
+}
+
+interface WatchdogAbortToolInput {
+  trackedSessions: ReadonlyMap<string, TrackedSession>;
+  abortSession: (sessionID: string) => Promise<boolean>;
+  logAbort?: (entry: WatchdogAbortLogEntry) => Promise<void>;
+  now?: () => number;
+}
+
+interface WatchdogAbortArgs {
+  sessionID?: string;
+}
+
+export interface WatchdogAbortLogEntry {
+  result: WatchdogAbortResult;
+  lastPartKind?: LastPartKind;
+}
+
+interface WatchdogAbortTarget {
+  sessionID: string;
+  agent?: string;
+  idleMs: number;
+  lastPartKind?: LastPartKind;
 }
 
 export function createWatchdogStatusTool(input: WatchdogStatusToolInput) {
@@ -24,6 +49,49 @@ export function createWatchdogStatusTool(input: WatchdogStatusToolInput) {
       return buildWatchdogStatus(input.trackedSessions, input.recentEvents, Date.now(), args.verbose ?? false);
     },
   });
+}
+
+export function createWatchdogAbortTool(input: WatchdogAbortToolInput) {
+  return tool({
+    description: "Abort a tracked stream watchdog session, or the longest-idle tracked session when omitted.",
+    args: {
+      sessionID: tool.schema.string().optional().describe("Specific opencode session ID to abort."),
+    },
+    async execute(args, context) {
+      const result = await executeWatchdogAbort(input, args);
+      context.metadata({ metadata: toAbortMetadata(result) });
+
+      return JSON.stringify(result);
+    },
+  });
+}
+
+export async function executeWatchdogAbort(
+  input: WatchdogAbortToolInput,
+  args: WatchdogAbortArgs,
+): Promise<WatchdogAbortResult> {
+  const target = resolveAbortTarget(
+    input.trackedSessions,
+    args.sessionID,
+    input.now?.() ?? Date.now(),
+  );
+
+  if (!target) {
+    return {
+      aborted: false,
+      sessionID: "",
+      idleMs: 0,
+    };
+  }
+
+  const aborted = await tryAbortSession(input.abortSession, target.sessionID);
+  const result = toAbortResult(target, aborted);
+
+  if (aborted) {
+    await tryLogAbort(input.logAbort, { result, lastPartKind: target.lastPartKind });
+  }
+
+  return result;
 }
 
 export function recordRecentWatchdogTransitions(
@@ -66,6 +134,113 @@ function buildWatchdogStatus(
 
   lines.push(...formatRecentEvents(recentEvents));
   return lines.join("\n");
+}
+
+function resolveAbortTarget(
+  trackedSessions: ReadonlyMap<string, TrackedSession>,
+  requestedSessionID: string | undefined,
+  now: number,
+): WatchdogAbortTarget | undefined {
+  if (requestedSessionID !== undefined) {
+    const tracked = trackedSessions.get(requestedSessionID);
+
+    if (!tracked) {
+      return {
+        sessionID: requestedSessionID,
+        idleMs: 0,
+      };
+    }
+
+    return toAbortTarget(tracked, now);
+  }
+
+  const tracked = selectLongestIdleTrackedSession(trackedSessions);
+  return tracked ? toAbortTarget(tracked, now) : undefined;
+}
+
+function selectLongestIdleTrackedSession(
+  trackedSessions: ReadonlyMap<string, TrackedSession>,
+): TrackedSession | undefined {
+  let selected: TrackedSession | undefined;
+
+  for (const tracked of trackedSessions.values()) {
+    if (!selected) {
+      selected = tracked;
+      continue;
+    }
+
+    if (tracked.lastActivity < selected.lastActivity) {
+      selected = tracked;
+      continue;
+    }
+
+    if (
+      tracked.lastActivity === selected.lastActivity &&
+      tracked.sessionID.localeCompare(selected.sessionID) < 0
+    ) {
+      selected = tracked;
+    }
+  }
+
+  return selected;
+}
+
+function toAbortTarget(tracked: TrackedSession, now: number): WatchdogAbortTarget {
+  return {
+    sessionID: tracked.sessionID,
+    agent: tracked.agent,
+    idleMs: Math.max(0, now - tracked.lastActivity),
+    lastPartKind: tracked.lastPartKind,
+  };
+}
+
+async function tryAbortSession(
+  abortSession: (sessionID: string) => Promise<boolean>,
+  sessionID: string,
+): Promise<boolean> {
+  try {
+    return await abortSession(sessionID);
+  } catch {
+    return false;
+  }
+}
+
+async function tryLogAbort(
+  logAbort: ((entry: WatchdogAbortLogEntry) => Promise<void>) | undefined,
+  entry: WatchdogAbortLogEntry,
+): Promise<void> {
+  if (!logAbort) {
+    return;
+  }
+
+  try {
+    await logAbort(entry);
+  } catch {
+    // Logging is best-effort and must never interrupt tool behavior.
+  }
+}
+
+function toAbortResult(target: WatchdogAbortTarget, aborted: boolean): WatchdogAbortResult {
+  return {
+    aborted,
+    sessionID: target.sessionID,
+    agent: target.agent,
+    idleMs: target.idleMs,
+  };
+}
+
+function toAbortMetadata(result: WatchdogAbortResult): Record<string, boolean | number | string> {
+  const metadata: Record<string, boolean | number | string> = {
+    aborted: result.aborted,
+    sessionID: result.sessionID,
+    idleMs: result.idleMs,
+  };
+
+  if (result.agent !== undefined) {
+    metadata.agent = result.agent;
+  }
+
+  return metadata;
 }
 
 function formatTrackedSession(session: TrackedSession, now: number, verbose: boolean): string {
