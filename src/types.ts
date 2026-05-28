@@ -2,12 +2,18 @@ export type StallState = "tracking" | "warned" | "aborted";
 
 export type LastPartKind = "text" | "reasoning" | "tool";
 
+export interface PerAgentThresholdConfig {
+  warnThresholdMs?: number;
+  abortThresholdMs?: number;
+}
+
 export interface WatchdogConfig {
   warnThresholdMs: number;
   abortThresholdMs: number;
   tickMs: number;
   toast: boolean;
   log: boolean;
+  perAgent: Record<string, PerAgentThresholdConfig>;
 }
 
 export interface TrackedSession {

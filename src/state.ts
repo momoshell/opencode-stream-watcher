@@ -103,13 +103,13 @@ export function stopTracking(
 
 export function scanTrackedSessions(
   sessions: Map<string, TrackedSession>,
-  config: Pick<WatchdogConfig, "warnThresholdMs" | "abortThresholdMs">,
+  config: Pick<WatchdogConfig, "warnThresholdMs" | "abortThresholdMs" | "perAgent">,
   now = Date.now(),
 ): StallTransition[] {
   const transitions: StallTransition[] = [];
 
   for (const tracked of sessions.values()) {
-    const transition = scanTrackedSession(tracked, config, now);
+    const transition = scanTrackedSession(tracked, resolveThresholds(tracked, config), now);
     if (transition) {
       transitions.push(transition);
     }
@@ -151,6 +151,25 @@ function scanTrackedSession(
     case "aborted":
       return undefined;
   }
+}
+
+function resolveThresholds(
+  tracked: TrackedSession,
+  config: Pick<WatchdogConfig, "warnThresholdMs" | "abortThresholdMs" | "perAgent">,
+): Pick<WatchdogConfig, "warnThresholdMs" | "abortThresholdMs"> {
+  const agent = tracked.agent;
+  if (agent === undefined) {
+    return {
+      warnThresholdMs: config.warnThresholdMs,
+      abortThresholdMs: config.abortThresholdMs,
+    };
+  }
+
+  const override = config.perAgent[agent];
+  return {
+    warnThresholdMs: override?.warnThresholdMs ?? config.warnThresholdMs,
+    abortThresholdMs: override?.abortThresholdMs ?? config.abortThresholdMs,
+  };
 }
 
 function shouldRearmTracking(

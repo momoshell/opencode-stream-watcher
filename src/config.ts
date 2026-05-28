@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { WatchdogConfig } from "./types.js";
 
 type LogLevel = "warn" | "error";
+type GlobalScalarConfigKey = "warnThresholdMs" | "abortThresholdMs" | "tickMs" | "toast" | "log";
+type ThresholdConfigKey = "warnThresholdMs" | "abortThresholdMs";
 
 export type ConfigLogger = (message: string, level?: LogLevel) => void;
 
@@ -25,10 +27,11 @@ const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   tickMs: 10_000,
   toast: true,
   log: true,
+  perAgent: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasFiniteNumber(value: unknown): value is number {
@@ -75,10 +78,10 @@ async function readConfigNamespace(filePath: string): Promise<Record<string, unk
   return readNamespace(parsed as PluginConfigRoot);
 }
 
-function applyValidatedValue(
+function applyValidatedGlobalValue(
   config: WatchdogConfig,
   source: Record<string, unknown>,
-  key: keyof WatchdogConfig,
+  key: GlobalScalarConfigKey,
   fallback: WatchdogConfig,
   logger: ConfigLogger,
 ): void {
@@ -131,15 +134,97 @@ function mergeConfig(
   fallback: WatchdogConfig,
   logger: ConfigLogger,
 ): WatchdogConfig {
-  const next: WatchdogConfig = { ...current };
+  const next: WatchdogConfig = {
+    ...current,
+    perAgent: { ...current.perAgent },
+  };
 
-  applyValidatedValue(next, source, "warnThresholdMs", fallback, logger);
-  applyValidatedValue(next, source, "abortThresholdMs", fallback, logger);
-  applyValidatedValue(next, source, "tickMs", fallback, logger);
-  applyValidatedValue(next, source, "toast", fallback, logger);
-  applyValidatedValue(next, source, "log", fallback, logger);
+  applyValidatedGlobalValue(next, source, "warnThresholdMs", fallback, logger);
+  applyValidatedGlobalValue(next, source, "abortThresholdMs", fallback, logger);
+  applyValidatedGlobalValue(next, source, "tickMs", fallback, logger);
+  applyValidatedGlobalValue(next, source, "toast", fallback, logger);
+  applyValidatedGlobalValue(next, source, "log", fallback, logger);
+  mergePerAgentConfig(next, source, logger);
 
   return next;
+}
+
+function mergePerAgentConfig(
+  config: WatchdogConfig,
+  source: Record<string, unknown>,
+  logger: ConfigLogger,
+): void {
+  const rawPerAgent = source["perAgent"];
+
+  if (rawPerAgent === undefined) {
+    return;
+  }
+
+  if (!isRecord(rawPerAgent)) {
+    logger("Invalid stream-watchdog.perAgent value; expected object. Ignoring.", "warn");
+    return;
+  }
+
+  for (const [agentName, rawAgentConfig] of Object.entries(rawPerAgent)) {
+    const pathPrefix = `stream-watchdog.perAgent.${agentName}`;
+
+    if (!isRecord(rawAgentConfig)) {
+      logger(`Invalid ${pathPrefix} value; expected object. Ignoring.`, "warn");
+      continue;
+    }
+
+    const mergedAgentConfig = {
+      ...(config.perAgent[agentName] ?? {}),
+    };
+
+    mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "warnThresholdMs", pathPrefix, logger);
+    mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "abortThresholdMs", pathPrefix, logger);
+
+    for (const nestedKey of Object.keys(rawAgentConfig)) {
+      if (nestedKey === "warnThresholdMs" || nestedKey === "abortThresholdMs") {
+        continue;
+      }
+
+      logger(`Invalid ${pathPrefix}.${nestedKey} value; key is not supported for per-agent overrides. Ignoring.`, "warn");
+    }
+
+    if (Object.keys(mergedAgentConfig).length > 0) {
+      config.perAgent[agentName] = mergedAgentConfig;
+    }
+  }
+}
+
+function mergePerAgentThresholdValue(
+  target: { warnThresholdMs?: number; abortThresholdMs?: number },
+  source: Record<string, unknown>,
+  key: ThresholdConfigKey,
+  pathPrefix: string,
+  logger: ConfigLogger,
+): void {
+  const value = source[key];
+
+  if (value === undefined) {
+    return;
+  }
+
+  if (key === "abortThresholdMs") {
+    const parsed = parseNonNegativeNumber(value);
+    if (parsed === null) {
+      logger(`Invalid ${pathPrefix}.${key} value; expected non-negative number. Ignoring.`, "warn");
+      return;
+    }
+
+    target[key] = parsed;
+    return;
+  }
+
+  const parsed = parsePositiveNumber(value);
+  if (parsed === null) {
+    logger(`Invalid ${pathPrefix}.${key} value; expected positive number. Ignoring.`, "warn");
+    return;
+  }
+
+  target[key] = parsed;
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -169,7 +254,10 @@ function getProjectConfigPath(options: LoadWatchdogConfigOptions): string {
 }
 
 export function getDefaultWatchdogConfig(): WatchdogConfig {
-  return { ...DEFAULT_WATCHDOG_CONFIG };
+  return {
+    ...DEFAULT_WATCHDOG_CONFIG,
+    perAgent: {},
+  };
 }
 
 export async function loadWatchdogConfig(
