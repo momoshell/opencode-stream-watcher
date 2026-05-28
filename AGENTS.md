@@ -74,6 +74,8 @@ bun run typecheck
 
 ## Working from issues
 
+You should be able to implement a repo issue with just this file plus the issue body. Stay inside the listed scope unless the issue explicitly expands it.
+
 Every PR closes one (and only one) issue. The issue body has:
 
 - **Goal** — one paragraph of context
@@ -82,7 +84,7 @@ Every PR closes one (and only one) issue. The issue body has:
 - **Acceptance criteria** — checklist the PR must satisfy
 - **Depends on** — which issues must merge first
 
-Read the issue end-to-end before writing code. If the acceptance criteria are ambiguous, comment on the issue and ask before guessing.
+Read the issue end-to-end before writing code. Treat the issue body as the source of truth for scope, acceptance, and dependencies. If the acceptance criteria are ambiguous, comment on the issue and ask before guessing.
 
 ## When you're stuck
 
