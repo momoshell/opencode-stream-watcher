@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Adds `stream-watchdog.perAgent.<agent-name>` threshold overrides for warn/abort timing; unconfigured or invalid per-agent entries fall back to the global thresholds.
+
 ## 0.1.0
 
 Initial release.

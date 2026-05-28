@@ -173,7 +173,10 @@ function createConfigLogger(client: PluginClient): ConfigLogger {
 function startTickLoop(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
-  config: Pick<WatchdogConfig, "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log" | "toast">,
+  config: Pick<
+    WatchdogConfig,
+    "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log" | "toast" | "perAgent"
+  >,
 ): void {
   stopTickLoop();
 
