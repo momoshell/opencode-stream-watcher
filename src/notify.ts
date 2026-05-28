@@ -35,6 +35,24 @@ export type AbortToastBody = {
   duration: 8000;
 };
 
+export type TurnDurationLogEntry = {
+  service: "stream-watchdog";
+  level: "info";
+  message: "TURN_DURATION";
+  extra: {
+    sessionID: string;
+    agent: string;
+    durationMs: number;
+  };
+};
+
+export type TurnDurationToastBody = {
+  title: "⌛ Turn done" | "⌛ Turn done · slow";
+  message: string;
+  variant: "info" | "warning";
+  duration: 4000;
+};
+
 export const UNKNOWN_LAST_PART_KIND = "unknown";
 export const UNKNOWN_AGENT = "unknown";
 
@@ -140,4 +158,38 @@ export function buildAbortToastBody(args: {
     variant: "error",
     duration: 8000,
   };
+}
+
+export function buildTurnDurationLogEntry(args: {
+  sessionID: string;
+  agent: string | null | undefined;
+  durationMs: number;
+}): TurnDurationLogEntry {
+  return {
+    service: "stream-watchdog",
+    level: "info",
+    message: "TURN_DURATION",
+    extra: {
+      sessionID: args.sessionID,
+      agent: normalizeAgent(args.agent),
+      durationMs: Math.max(0, args.durationMs),
+    },
+  };
+}
+
+export function buildTurnDurationToastBody(args: {
+  agent: string | null | undefined;
+  durationMs: number;
+  slow: boolean;
+}): TurnDurationToastBody {
+  return {
+    title: args.slow ? "⌛ Turn done · slow" : "⌛ Turn done",
+    message: `${normalizeAgent(args.agent)} · ${formatDuration(args.durationMs)}`,
+    variant: args.slow ? "warning" : "info",
+    duration: 4000,
+  };
+}
+
+function formatDuration(durationMs: number): string {
+  return `${toIdleSeconds(durationMs)}s`;
 }

@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { loadWatchdogConfig } from "../dist/config.js";
 
 const tempDirs = [];
+const DEFAULT_DURATION = {
+  enabled: true,
+  minToastMs: 5_000,
+  slowToastMs: 30_000,
+};
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -40,6 +45,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
     expect(warnings).toEqual([]);
@@ -76,6 +82,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 15_000,
       toast: false,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
   });
@@ -116,6 +123,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
     expect(warnings.length).toBe(6);
@@ -155,6 +163,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
     expect(warnings.length).toBe(2);
@@ -182,6 +191,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
 
@@ -199,6 +209,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      duration: DEFAULT_DURATION,
       perAgent: {},
     });
     expect(warnings.length).toBe(2);

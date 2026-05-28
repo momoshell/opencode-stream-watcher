@@ -2,11 +2,13 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { WatchdogConfig } from "./types.js";
+import type { DurationConfig, PerAgentThresholdConfig, WatchdogConfig } from "./types.js";
 
 type LogLevel = "warn" | "error";
 type GlobalScalarConfigKey = "warnThresholdMs" | "abortThresholdMs" | "tickMs" | "toast" | "log";
 type ThresholdConfigKey = "warnThresholdMs" | "abortThresholdMs";
+type DurationConfigKey = keyof DurationConfig;
+type DurationThresholdConfigKey = "minToastMs" | "slowToastMs";
 
 export type ConfigLogger = (message: string, level?: LogLevel) => void;
 
@@ -27,6 +29,11 @@ const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   tickMs: 10_000,
   toast: true,
   log: true,
+  duration: {
+    enabled: true,
+    minToastMs: 5_000,
+    slowToastMs: 30_000,
+  },
   perAgent: {},
 };
 
@@ -56,6 +63,27 @@ function parseNonNegativeNumber(value: unknown): number | null {
 
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function cloneDurationConfig(config: DurationConfig): DurationConfig {
+  return { ...config };
+}
+
+function clonePerAgentConfig(
+  perAgent: WatchdogConfig["perAgent"],
+): WatchdogConfig["perAgent"] {
+  const cloned: WatchdogConfig["perAgent"] = {};
+
+  for (const [agentName, agentConfig] of Object.entries(perAgent)) {
+    const clonedAgentConfig: PerAgentThresholdConfig = { ...agentConfig };
+    if (agentConfig.duration !== undefined) {
+      clonedAgentConfig.duration = { ...agentConfig.duration };
+    }
+
+    cloned[agentName] = clonedAgentConfig;
+  }
+
+  return cloned;
 }
 
 function readNamespace(value: unknown): Record<string, unknown> {
@@ -136,7 +164,8 @@ function mergeConfig(
 ): WatchdogConfig {
   const next: WatchdogConfig = {
     ...current,
-    perAgent: { ...current.perAgent },
+    duration: cloneDurationConfig(current.duration),
+    perAgent: clonePerAgentConfig(current.perAgent),
   };
 
   applyValidatedGlobalValue(next, source, "warnThresholdMs", fallback, logger);
@@ -144,9 +173,80 @@ function mergeConfig(
   applyValidatedGlobalValue(next, source, "tickMs", fallback, logger);
   applyValidatedGlobalValue(next, source, "toast", fallback, logger);
   applyValidatedGlobalValue(next, source, "log", fallback, logger);
+  applyValidatedDurationConfig(next, source, fallback, logger);
   mergePerAgentConfig(next, source, logger);
 
   return next;
+}
+
+function applyValidatedDurationConfig(
+  config: WatchdogConfig,
+  source: Record<string, unknown>,
+  fallback: WatchdogConfig,
+  logger: ConfigLogger,
+): void {
+  const rawDuration = source["duration"];
+
+  if (rawDuration === undefined) {
+    return;
+  }
+
+  if (!isRecord(rawDuration)) {
+    logger("Invalid stream-watchdog.duration value; expected object. Using fallback.", "warn");
+    config.duration = cloneDurationConfig(fallback.duration);
+    return;
+  }
+
+  const nextDuration = cloneDurationConfig(config.duration);
+
+  applyValidatedDurationValue(nextDuration, rawDuration, "enabled", fallback.duration, logger);
+  applyValidatedDurationValue(nextDuration, rawDuration, "minToastMs", fallback.duration, logger);
+  applyValidatedDurationValue(nextDuration, rawDuration, "slowToastMs", fallback.duration, logger);
+
+  for (const nestedKey of Object.keys(rawDuration)) {
+    if (nestedKey === "enabled" || nestedKey === "minToastMs" || nestedKey === "slowToastMs") {
+      continue;
+    }
+
+    logger(`Invalid stream-watchdog.duration.${nestedKey} value; key is not supported. Ignoring.`, "warn");
+  }
+
+  config.duration = nextDuration;
+}
+
+function applyValidatedDurationValue(
+  target: DurationConfig,
+  source: Record<string, unknown>,
+  key: DurationConfigKey,
+  fallback: DurationConfig,
+  logger: ConfigLogger,
+): void {
+  const value = source[key];
+
+  if (value === undefined) {
+    return;
+  }
+
+  if (key === "enabled") {
+    const parsed = parseBoolean(value);
+    if (parsed === null) {
+      logger(`Invalid stream-watchdog.duration.${key} value; expected boolean. Using fallback.`, "warn");
+      target[key] = fallback[key];
+      return;
+    }
+
+    target[key] = parsed;
+    return;
+  }
+
+  const parsed = parsePositiveNumber(value);
+  if (parsed === null) {
+    logger(`Invalid stream-watchdog.duration.${key} value; expected positive number. Using fallback.`, "warn");
+    target[key] = fallback[key];
+    return;
+  }
+
+  target[key] = parsed;
 }
 
 function mergePerAgentConfig(
@@ -173,15 +273,20 @@ function mergePerAgentConfig(
       continue;
     }
 
-    const mergedAgentConfig = {
+    const mergedAgentConfig: PerAgentThresholdConfig = {
       ...(config.perAgent[agentName] ?? {}),
     };
+    const existingDuration = config.perAgent[agentName]?.duration;
+    if (existingDuration !== undefined) {
+      mergedAgentConfig.duration = { ...existingDuration };
+    }
 
     mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "warnThresholdMs", pathPrefix, logger);
     mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "abortThresholdMs", pathPrefix, logger);
+    mergePerAgentDurationConfig(mergedAgentConfig, rawAgentConfig, pathPrefix, logger);
 
     for (const nestedKey of Object.keys(rawAgentConfig)) {
-      if (nestedKey === "warnThresholdMs" || nestedKey === "abortThresholdMs") {
+      if (nestedKey === "warnThresholdMs" || nestedKey === "abortThresholdMs" || nestedKey === "duration") {
         continue;
       }
 
@@ -192,6 +297,65 @@ function mergePerAgentConfig(
       config.perAgent[agentName] = mergedAgentConfig;
     }
   }
+}
+
+function mergePerAgentDurationConfig(
+  target: PerAgentThresholdConfig,
+  source: Record<string, unknown>,
+  pathPrefix: string,
+  logger: ConfigLogger,
+): void {
+  const rawDuration = source["duration"];
+
+  if (rawDuration === undefined) {
+    return;
+  }
+
+  if (!isRecord(rawDuration)) {
+    logger(`Invalid ${pathPrefix}.duration value; expected object. Ignoring.`, "warn");
+    return;
+  }
+
+  const mergedDuration = {
+    ...(target.duration ?? {}),
+  };
+
+  mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, "minToastMs", `${pathPrefix}.duration`, logger);
+  mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, "slowToastMs", `${pathPrefix}.duration`, logger);
+
+  for (const nestedKey of Object.keys(rawDuration)) {
+    if (nestedKey === "minToastMs" || nestedKey === "slowToastMs") {
+      continue;
+    }
+
+    logger(`Invalid ${pathPrefix}.duration.${nestedKey} value; key is not supported for per-agent duration overrides. Ignoring.`, "warn");
+  }
+
+  if (Object.keys(mergedDuration).length > 0) {
+    target.duration = mergedDuration;
+  }
+}
+
+function mergePerAgentDurationThresholdValue(
+  target: NonNullable<PerAgentThresholdConfig["duration"]>,
+  source: Record<string, unknown>,
+  key: DurationThresholdConfigKey,
+  pathPrefix: string,
+  logger: ConfigLogger,
+): void {
+  const value = source[key];
+
+  if (value === undefined) {
+    return;
+  }
+
+  const parsed = parsePositiveNumber(value);
+  if (parsed === null) {
+    logger(`Invalid ${pathPrefix}.${key} value; expected positive number. Ignoring.`, "warn");
+    return;
+  }
+
+  target[key] = parsed;
 }
 
 function mergePerAgentThresholdValue(
@@ -256,6 +420,7 @@ function getProjectConfigPath(options: LoadWatchdogConfigOptions): string {
 export function getDefaultWatchdogConfig(): WatchdogConfig {
   return {
     ...DEFAULT_WATCHDOG_CONFIG,
+    duration: cloneDurationConfig(DEFAULT_WATCHDOG_CONFIG.duration),
     perAgent: {},
   };
 }
@@ -267,7 +432,7 @@ export async function loadWatchdogConfig(
   const paths = [getGlobalConfigPath(options), getProjectConfigPath(options)];
   const defaults = getDefaultWatchdogConfig();
 
-  let merged = { ...defaults };
+  let merged = getDefaultWatchdogConfig();
 
   for (const configPath of paths) {
     try {

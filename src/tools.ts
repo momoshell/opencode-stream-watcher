@@ -253,6 +253,10 @@ function formatTrackedSession(session: TrackedSession, now: number, verbose: boo
     `state=${session.state}`,
   ];
 
+  if (session.lastTurnMs !== undefined) {
+    parts.push(`lastTurnMs=${session.lastTurnMs}`);
+  }
+
   if (verbose) {
     parts.push(
       `lastActivity=${new Date(session.lastActivity).toISOString()}`,

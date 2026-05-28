@@ -5,7 +5,16 @@ export type LastPartKind = "text" | "reasoning" | "tool";
 export interface PerAgentThresholdConfig {
   warnThresholdMs?: number;
   abortThresholdMs?: number;
+  duration?: PerAgentDurationConfig;
 }
+
+export interface DurationConfig {
+  enabled: boolean;
+  minToastMs: number;
+  slowToastMs: number;
+}
+
+export type PerAgentDurationConfig = Partial<Pick<DurationConfig, "minToastMs" | "slowToastMs">>;
 
 export interface WatchdogConfig {
   warnThresholdMs: number;
@@ -13,6 +22,7 @@ export interface WatchdogConfig {
   tickMs: number;
   toast: boolean;
   log: boolean;
+  duration: DurationConfig;
   perAgent: Record<string, PerAgentThresholdConfig>;
 }
 
@@ -20,9 +30,11 @@ export interface TrackedSession {
   sessionID: string;
   agent?: string;
   slug?: string;
+  callStart: number;
   lastActivity: number;
   resumeStartedAt?: number;
   lastPartKind?: LastPartKind;
+  lastTurnMs?: number;
   state: StallState;
   stateSince: number;
 }

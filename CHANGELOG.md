@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add turn-duration reporting/config docs, including default `stream-watchdog.duration` thresholds and per-agent `minToastMs`/`slowToastMs` overrides.
+
 ## 0.2.0
 
 - Adds `stream-watchdog.perAgent.<agent-name>` threshold overrides for warn/abort timing; unconfigured or invalid per-agent entries fall back to the global thresholds.
