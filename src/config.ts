@@ -25,7 +25,7 @@ type PluginConfigRoot = {
 
 const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   warnThresholdMs: 90_000,
-  abortThresholdMs: 0,
+  abortThresholdMs: 600_000,
   tickMs: 10_000,
   toast: true,
   log: true,

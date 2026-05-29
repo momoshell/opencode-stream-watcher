@@ -27,7 +27,7 @@ Use this guide to manually verify that stream-watchdog surfaces the default WARN
 
 5. Confirm you are using the default config:
    - `warnThresholdMs: 90000`
-   - `abortThresholdMs: 0`
+   - `abortThresholdMs: 600000`
    - `tickMs: 10000`
    - `toast: true`
    - `log: true`

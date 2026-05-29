@@ -58,13 +58,13 @@ export const StreamWatchdog: Plugin = async (ctx) => {
 | `client.tui.showToast({ body: { title, message, variant, duration } })` | TUI toast notifications |
 | `client.app.log({ body: { service, level, message } })` | Structured logging into opencode's log stream |
 
-### Client methods relevant for future versions
+### Client methods used today
 
-| Method | Planned use |
+| Method | Purpose |
 |---|---|
-| `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel for selective abort / auto-abort work in v0.2+ / v1.0 |
+| `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel for default auto-abort and selective abort tooling |
 
-v0.1 uses the heartbeat events plus best-effort toasts and structured logs. The abort API exists, but the current source does not call it yet.
+Current releases use the heartbeat events plus best-effort toasts, structured logs, and `client.session.abort()` when silence crosses the configured abort threshold.
 
 ## Architecture
 
@@ -96,13 +96,13 @@ v0.1 uses the heartbeat events plus best-effort toasts and structured logs. The 
                 ┌───────────────────┼───────────────────┐
                 ▼                   ▼                   ▼
         ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-        │ WARN toast   │    │ RESUME toast │    │ ABORT log    │
-        │ + app.log    │    │ + app.log    │    │ (state only  │
-        │              │    │              │    │  in v0.1)    │
+        │ WARN toast   │    │ RESUME toast │    │ ABORT toast  │
+        │ + app.log    │    │ + app.log    │    │ + app.log    │
+        │              │    │              │    │ + abort()    │
         └──────────────┘    └──────────────┘    └──────────────┘
 ```
 
-> ℹ️ WARN, RESUME, and ABORT state transitions each fire **at most once per stall window**. In v0.1, WARN and RESUME can surface as toasts and logs; ABORT currently surfaces as a log-stage transition only.
+> ℹ️ WARN, RESUME, and ABORT state transitions each fire **at most once per stall window**.
 
 State machine per tracked session:
 
@@ -134,7 +134,9 @@ The earlier safeguard option ("external log-tailer") would work but has worse er
 - The plugin keeps one module-level `setInterval` and scans the tracked-session map every `tickMs`.
 - WARN triggers once `idleMs >= warnThresholdMs`.
 - After WARN, a session only re-arms once there has been more than 30 seconds of resumed activity and the session is no longer past the WARN threshold.
-- If `abortThresholdMs > 0`, the state machine can transition from `warned` to `aborted`; in v0.1 that produces an `ABORT` incident log stage but does **not** call `client.session.abort()`.
+- By default, `abortThresholdMs` is `600000` (10 minutes).
+- If `abortThresholdMs > 0`, the state machine can transition from `warned` to `aborted`, call `client.session.abort()`, and emit the ABORT incident surfaces.
+- Setting `abortThresholdMs` to `0` is the explicit opt-out.
 
 ## UX
 
@@ -144,14 +146,14 @@ The earlier safeguard option ("external log-tailer") would work but has worse er
 |---|---|---|---|---|
 | WARN | warning | `⏸ Stream stalled` | 0 (sticky) | Toast body includes agent, session label, idle seconds, last part kind, and the Esc / Huginn selective-abort hint. |
 | RESUME | success | `▶ Stream recovered` | 4000ms | Toast body is `<agent> · <slug-or-sessionID> · resumed after <Xs>`. |
-| ABORT | n/a in v0.1 UI | n/a | n/a | No ABORT toast is implemented today; only the `ABORT` incident log stage exists. |
-| Selective abort *(v0.2+)* | tbd | tbd | tbd | Planned once a tool or other UI path actually calls `client.session.abort()`. |
+| ABORT | error | `■ Stream aborted` | 8000ms | When auto-abort succeeds, the plugin aborts the session and surfaces an error toast plus structured log entry. |
+| Selective abort | error | `■ Stream aborted` | 8000ms | The same abort path is used when a foreground agent calls `watchdog_abort`. |
 
 ### De-duplication rules
 
 - One WARN per stall window. After WARN, re-arm only after >30s of resumed activity, then the next stall can trigger a fresh WARN.
 - RESUME fires only if a WARN preceded it in the same session lifetime.
-- ABORT state transitions only when `abortThresholdMs > 0` and the session is already in `warned` state; in v0.1 this is logged but not acted on with a programmatic cancel.
+- ABORT state transitions only when `abortThresholdMs > 0` and the session is already in `warned` state.
 
 ### Why Esc, not Ctrl+C
 
@@ -162,13 +164,13 @@ opencode's keybinding system treats `esc` as the interrupt key (`escape:"esc"` i
 | Path | When | Mechanism |
 |---|---|---|
 | Esc cascade | Single active delegation stalls | User hits Esc — opencode's TUI interrupt key. In observed setups (e.g., Muninn → backend-specialist), this reaches the active subagent and the parent sees `error=Aborted process`, handled per its existing no-op verification protocol. |
-| `watchdog_abort` tool *(v0.2+)* | Parallel delegations where only one is stuck | Planned: foreground agent calls `watchdog_abort(sessionID)` and the plugin cancels just that one session. |
-| `watchdog_status` tool *(v0.2+)* | Before deciding to kill | Planned: list tracked sessions with idle times and last-part kind to help judge "real stall" vs "long reasoning." |
+| `watchdog_abort` tool | Parallel delegations where only one is stuck | Foreground agent calls `watchdog_abort(sessionID)` and the plugin cancels just that one session. |
+| `watchdog_status` tool | Before deciding to kill | Lists tracked sessions with idle times and last-part kind to help judge "real stall" vs "long reasoning." |
 | `read_session` (via opencode-handoff plugin) | Forensic | If the user has `opencode-handoff` installed, ask the foreground agent to read the stuck subagent's transcript so far. |
-| Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms). Planned v0.2+ behavior may optionally abort later if configured. |
+| Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms) or the default 10-minute auto-abort fires, unless you set `abortThresholdMs: 0`. |
 | Restart opencode | Esc didn't propagate | Nuclear, rare. Documented in README, not engineered around. |
 
-In short: v0.1's real recovery path is operator-driven. The plugin detects, logs, and warns; the user or foreground agent decides what to do next.
+In short: the plugin detects, logs, warns, and by default auto-aborts long silent stalls; users can still opt out with `abortThresholdMs: 0`.
 
 ## Distribution
 
@@ -182,9 +184,9 @@ opencode auto-resolves from npm at startup and caches in `~/.cache/opencode/node
 
 ### Versioning
 
-- `0.1.x` — current implemented shape: one tick loop, WARN/RESUME toasts, structured logs, config-driven thresholds, no programmatic abort call.
-- `0.2.x` — planned: tools such as `watchdog_status` / `watchdog_abort`, plus selective-abort UX built on top of the existing tracked-session state.
-- `1.0.0` — planned: consider an auto-abort default only after enough dogfood confidence that false positives are rare and understandable.
+- `0.1.x` — initial notify-first shape: one tick loop, WARN/RESUME toasts, structured logs, config-driven thresholds, no default auto-abort.
+- `0.2.x` — current shape: `watchdog_status` / `watchdog_abort`, successful programmatic aborts, and a default `abortThresholdMs` of `600000` with explicit opt-out via `0`.
+- `1.0.0` — planned: keep refining guidance and defaults based on real-world false-positive rates and threshold data.
 
 ### Maintenance
 
@@ -205,7 +207,7 @@ Each log entry includes `sessionID`, `agent`, `idleSeconds`, and `lastPartKind`.
 
 ## Open questions
 
-These are future-version questions, not blockers for the current v0.1 design:
+These are future-version questions, not blockers for the current design:
 
-1. **How should programmatic abort surface to the parent session?** Esc cascade behavior is known; `client.session.abort()` behavior still needs explicit verification before selective abort ships.
+1. **How should programmatic abort surface to the parent session?** Esc cascade behavior is known; `client.session.abort()` works for the plugin, but parent-session UX may still need polishing.
 2. **Is the 30s re-arm window the right trade-off?** It prevents WARN spam after brief recoveries, but may still need tuning with real-world usage.

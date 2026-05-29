@@ -41,7 +41,7 @@ describe("loadWatchdogConfig", () => {
 
     expect(config).toEqual({
       warnThresholdMs: 90_000,
-      abortThresholdMs: 0,
+      abortThresholdMs: 600_000,
       tickMs: 10_000,
       toast: true,
       log: true,
@@ -119,7 +119,7 @@ describe("loadWatchdogConfig", () => {
 
     expect(config).toEqual({
       warnThresholdMs: 90_000,
-      abortThresholdMs: 0,
+      abortThresholdMs: 600_000,
       tickMs: 10_000,
       toast: true,
       log: true,
@@ -159,7 +159,7 @@ describe("loadWatchdogConfig", () => {
 
     expect(config).toEqual({
       warnThresholdMs: 90_000,
-      abortThresholdMs: 0,
+      abortThresholdMs: 600_000,
       tickMs: 10_000,
       toast: true,
       log: true,
@@ -187,7 +187,7 @@ describe("loadWatchdogConfig", () => {
 
     expect(malformedConfig).toEqual({
       warnThresholdMs: 90_000,
-      abortThresholdMs: 0,
+      abortThresholdMs: 600_000,
       tickMs: 10_000,
       toast: true,
       log: true,
@@ -205,7 +205,7 @@ describe("loadWatchdogConfig", () => {
 
     expect(unreadableConfig).toEqual({
       warnThresholdMs: 90_000,
-      abortThresholdMs: 0,
+      abortThresholdMs: 600_000,
       tickMs: 10_000,
       toast: true,
       log: true,

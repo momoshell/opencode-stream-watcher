@@ -9,9 +9,11 @@ This document uses **illustrative starting points**, not broad dogfood claims. T
 If you do not have local usage data yet, start here:
 
 - `warnThresholdMs: 90000`
-- `abortThresholdMs: 0` (disabled)
+- `abortThresholdMs: 600000`
 
-That gives agents about 90 seconds of silence before a WARN and avoids automatic interruption while you learn your normal patterns.
+That gives agents about 90 seconds of silence before a WARN and about 10 minutes of silence before auto-abort.
+
+If you want to learn your normal patterns without automatic interruption, explicitly opt out with `abortThresholdMs: 0`.
 
 ## What to measure
 
@@ -38,7 +40,7 @@ Practical rule of thumb:
 - If `warns` stay near zero, your threshold is probably fine.
 - If `warns` are common but `resumes` are also common, the threshold is probably too low.
 - If real stalls still sit unnoticed for too long, the threshold is probably too high.
-- Only consider auto-abort after WARN behavior looks trustworthy.
+- Keep auto-abort on unless you have a concrete reason to opt out with `abortThresholdMs: 0`.
 
 ## Choosing a WARN threshold
 
@@ -56,13 +58,21 @@ Conservative approach:
 
 ## Choosing an ABORT threshold
 
-Keep `abortThresholdMs` at `0` until WARNs are useful.
+Auto-abort is on by default. Keep `abortThresholdMs` comfortably above `warnThresholdMs` so WARN has time to surface first.
 
-When enabling auto-abort:
+If you want auto-abort fully disabled, explicitly set `abortThresholdMs` to `0`.
+
+When tuning auto-abort:
 
 - set it comfortably above `warnThresholdMs`
 - leave enough time to notice the WARN and press **Esc** yourself if needed
-- prefer a large gap at first, such as WARN at 90s and ABORT at 180s
+- prefer a large gap at first, such as WARN at 90s and ABORT at 180s or the 10-minute default
+
+### Migration note for older configs
+
+If you already set `warnThresholdMs` above `600000`, also set `abortThresholdMs` higher than `warnThresholdMs` or set it to `0`.
+
+Otherwise the watchdog may auto-abort before WARN fires.
 
 ## Example profiles
 
@@ -89,7 +99,7 @@ For reviewer-style agents that legitimately spend longer on deep analysis, start
 }
 ```
 
-Use this profile when WARNs are mostly false positives and the agent's `durationP95Ms` already trends high.
+Use this profile when WARNs are mostly false positives, the agent's `durationP95Ms` already trends high, and you want to explicitly disable auto-abort for that agent.
 
 ### Fast doc-writer style agent
 
@@ -112,7 +122,7 @@ For agents that usually respond quickly, start lower:
 }
 ```
 
-Use this profile when long silent gaps are unusual and you want earlier visibility.
+Use this profile when long silent gaps are unusual, you want earlier visibility, and you want to explicitly disable auto-abort for that agent.
 
 ## Copy-paste multi-agent example
 
@@ -150,4 +160,4 @@ You do **not** need formal benchmarking. Just review whether the numbers match y
 - `durationP95Ms` is stable but `durationMaxMs` has one-off spikes: tune around p95, not the single max.
 - Auto-abort feels risky: disable it again with `abortThresholdMs: 0`.
 
-The safest pattern is: **tune WARN first, enable ABORT later**.
+The safest pattern is: **tune WARN first, then either keep the default auto-abort gap or opt out explicitly with `abortThresholdMs: 0`**.
