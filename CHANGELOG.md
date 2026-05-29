@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- **BREAKING CHANGE:** `stream-watchdog.abortThresholdMs` now defaults to `600000` (10 minutes) instead of `0`. To keep notify-only behavior, set `"abortThresholdMs": 0` explicitly.
 - Add turn-duration reporting/config docs, including default `stream-watchdog.duration` thresholds and per-agent `minToastMs`/`slowToastMs` overrides.
 
 ## 0.2.0

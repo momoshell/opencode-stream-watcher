@@ -14,7 +14,7 @@ It solves that with:
 - a **RESUME** toast if the stream comes back
 - structured log entries you can grep later
 
-Default behavior is safe: **warn only, no auto-abort**.
+Default behavior is: **warn at 90s, auto-abort at 10 minutes**.
 
 ## The problem
 
@@ -37,10 +37,10 @@ Subscribes to the opencode message bus, timestamps every streaming chunk per ses
 
 - **Warns you** with a sticky TUI toast when a session goes quiet past a threshold (default 90s).
 - **Lets you know** when it recovers, via a transient success toast.
-- **Optionally auto-aborts** the stalled session (off by default; opt in when you trust it).
+- **Auto-aborts** the stalled session after 10 minutes by default.
 - **Logs everything** through opencode's structured log so you can grep incident history.
 
-No system notifications, no terminal bells, no busy-work. Just toast + log.
+No system notifications, no terminal bells, no busy-work. Just focused TUI feedback, structured logs, and a default safety stop for long silent stalls.
 
 What a warning looks like in the TUI:
 
@@ -75,7 +75,7 @@ Add this to your `opencode.json`:
 3. If a subagent stalls, react from the toast.
 ```
 
-That's it — defaults are safe (warn only, no auto-abort).
+That's it — by default you get a WARN at 90s and an auto-abort at 10 minutes.
 
 ### Verify it loaded
 
@@ -96,7 +96,7 @@ All keys optional; defaults shown:
   "plugin": ["opencode-stream-watcher"],
   "stream-watchdog": {
     "warnThresholdMs": 90000,
-    "abortThresholdMs": 0,
+    "abortThresholdMs": 600000,
     "tickMs": 10000,
     "toast": true,
     "log": true,
@@ -112,7 +112,7 @@ All keys optional; defaults shown:
 | Key | Default | Meaning |
 |---|---|---|
 | `warnThresholdMs` | `90000` | Idle milliseconds before a WARN toast fires |
-| `abortThresholdMs` | `0` | Idle ms before auto-abort. `0` disables auto-abort (notify-only mode) |
+| `abortThresholdMs` | `600000` | Idle ms before auto-abort. Set `0` to opt out explicitly. |
 | `tickMs` | `10000` | How often the watchdog checks tracked sessions |
 | `toast` | `true` | Show TUI toasts |
 | `log` | `true` | Write structured log entries via `client.app.log` |
@@ -127,7 +127,7 @@ All keys optional; defaults shown:
 {
   "stream-watchdog": {
     "warnThresholdMs": 90000,
-    "abortThresholdMs": 0,
+    "abortThresholdMs": 600000,
     "perAgent": {
       "code-reviewer-deep": {
         "warnThresholdMs": 300000,
@@ -142,7 +142,7 @@ All keys optional; defaults shown:
 }
 ```
 
-Use `perAgent` when one agent class naturally runs quieter, should auto-abort sooner, or needs different duration toast thresholds.
+Use `perAgent` when one agent class naturally runs quieter, should auto-abort sooner, should opt out with `0`, or needs different duration toast thresholds.
 
 ### Turn-duration reporting
 
@@ -176,20 +176,26 @@ By default the plugin logs completed turns as `TURN_DURATION` and shows an info 
 
 Per-agent duration overrides support `minToastMs` and `slowToastMs` only. `duration.enabled` is global.
 
-### Auto-abort is opt-in
+### Opt out of auto-abort
 
-Set `abortThresholdMs` above `0` only when you trust the watchdog to stop stuck sessions for you.
+Set `abortThresholdMs` to `0` when you want WARN/RESUME behavior without auto-abort.
 
 ```json
 {
   "stream-watchdog": {
     "warnThresholdMs": 90000,
-    "abortThresholdMs": 180000
+    "abortThresholdMs": 0
   }
 }
 ```
 
-Safe default remains notify-only: WARN + RESUME, no auto-abort.
+The default remains `600000` unless you override it.
+
+### Migration note for older configs
+
+If you already raised `warnThresholdMs` above the default `600000`, also raise `abortThresholdMs` above your WARN threshold or set `abortThresholdMs` to `0`.
+
+Otherwise the watchdog can auto-abort before it ever reaches WARN.
 
 ### Tooling
 
@@ -250,16 +256,16 @@ state machine: tracking ─────►│
                                    RESUME toast + log
 ```
 
-The watchdog reads `message.part.updated` (fires on every streaming chunk — text, reasoning, or tool delta) and `session.status` events. It emits a **WARN** when activity goes silent past `warnThresholdMs`, **RESUME** if it picks back up, and (optionally) aborts when silence crosses `abortThresholdMs`. Toasts go through `client.tui.showToast()`; the abort goes through `client.session.abort()`.
+The watchdog reads `message.part.updated` (fires on every streaming chunk — text, reasoning, or tool delta) and `session.status` events. It emits a **WARN** when activity goes silent past `warnThresholdMs`, **RESUME** if it picks back up, and aborts when silence crosses `abortThresholdMs` unless you explicitly set that threshold to `0`. Toasts go through `client.tui.showToast()`; the abort goes through `client.session.abort()`.
 
 Details and the *why* behind each decision: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Roadmap
 
-- **v0.1 — Notify-only**: WARN + RESUME toasts, structured logs, safe defaults.
-- **v0.2 — Selective control** *(current)*: per-agent thresholds, `watchdog_status` + `watchdog_abort`, opt-in auto-abort.
+- **v0.1 — Notify-only**: WARN + RESUME toasts, structured logs, no default auto-abort.
+- **v0.2 — Selective control** *(current)*: per-agent thresholds, `watchdog_status` + `watchdog_abort`, default 10-minute auto-abort with explicit opt-out.
 - **Later v0.2.x**: more turn-duration tuning based on real-world usage.
-- **v1.0 — Trusted defaults**: stats counters, empirical threshold guidance, auto-abort default-on.
+- **v1.0 — Trusted defaults**: stats counters and empirical threshold guidance.
 
 Why the milestones look this way and what gates a default change → [`docs/DESIGN.md` § Versioning](docs/DESIGN.md#versioning). Live tracking on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).
 
