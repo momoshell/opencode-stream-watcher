@@ -1,5 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 
+import { formatWatchdogStats, type WatchdogStatsSnapshot } from "./stats.js";
+
 import type {
   LastPartKind,
   RecentWatchdogEvent,
@@ -14,6 +16,7 @@ const MAX_RECENT_EVENTS = 10;
 interface WatchdogStatusToolInput {
   trackedSessions: ReadonlyMap<string, TrackedSession>;
   recentEvents: readonly RecentWatchdogEvent[];
+  getStatsSnapshot?: () => WatchdogStatsSnapshot;
 }
 
 interface WatchdogAbortToolInput {
@@ -46,7 +49,13 @@ export function createWatchdogStatusTool(input: WatchdogStatusToolInput) {
       verbose: tool.schema.boolean().optional().describe("Include timestamp details for tracked sessions."),
     },
     async execute(args) {
-      return buildWatchdogStatus(input.trackedSessions, input.recentEvents, Date.now(), args.verbose ?? false);
+      return buildWatchdogStatus(
+        input.trackedSessions,
+        input.recentEvents,
+        Date.now(),
+        args.verbose ?? false,
+        input.getStatsSnapshot,
+      );
     },
   });
 }
@@ -112,11 +121,12 @@ export function recordRecentWatchdogTransitions(
   }
 }
 
-function buildWatchdogStatus(
+export function buildWatchdogStatus(
   trackedSessions: ReadonlyMap<string, TrackedSession>,
   recentEvents: readonly RecentWatchdogEvent[],
   now: number,
   verbose: boolean,
+  getStatsSnapshot?: () => WatchdogStatsSnapshot,
 ): string {
   const tracked = [...trackedSessions.values()].sort((left, right) => left.sessionID.localeCompare(right.sessionID));
   const lines: string[] = [];
@@ -133,6 +143,11 @@ function buildWatchdogStatus(
   }
 
   lines.push(...formatRecentEvents(recentEvents));
+
+  if (getStatsSnapshot) {
+    lines.push(...formatWatchdogStats(getStatsSnapshot()));
+  }
+
   return lines.join("\n");
 }
 

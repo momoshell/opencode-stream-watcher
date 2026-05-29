@@ -239,6 +239,116 @@ describe("turn duration plugin wiring", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("counts WARN scan transitions and RESUME on first post-warn activity", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+
+    try {
+      await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+        "stream-watchdog": {
+          warnThresholdMs: 1,
+          abortThresholdMs: 0,
+          tickMs: 10,
+          log: false,
+          toast: false,
+          duration: {
+            enabled: false,
+            minToastMs: 5_000,
+            slowToastMs: 30_000,
+          },
+        },
+      }));
+
+      const client = createPluginClient({ sessionMetadata: { agent: "coder" } });
+      const plugin = await createPlugin(tempDir, client.client);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await waitForMetadata(client);
+      await waitUntilStatusContains(statusTool, "warns=1");
+
+      await plugin.event?.(partUpdatedEvent("session-1", "assistant"));
+      await plugin.event?.(idleEvent("session-1"));
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("totals warns=1 resumes=1 aborts=0");
+      expect(status).toContain("byAgent agent=coder warns=1 resumes=1 aborts=0");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rearms after same-millisecond WARN and first post-warn activity", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+        "stream-watchdog": {
+          warnThresholdMs: 1,
+          abortThresholdMs: 0,
+          tickMs: 10,
+          log: false,
+          toast: false,
+          duration: {
+            enabled: false,
+            minToastMs: 5_000,
+            slowToastMs: 30_000,
+          },
+        },
+      }));
+
+      const clock = restoreDateNow.clock;
+      const client = createPluginClient({ sessionMetadata: { agent: "coder" } });
+      const plugin = await createPlugin(tempDir, client.client);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await waitForMetadata(client);
+
+      clock.now = 1_001;
+      await waitUntilStatusContains(statusTool, "state=warned");
+      await plugin.event?.(partUpdatedEvent("session-1", "assistant"));
+
+      clock.now = 31_003;
+      await plugin.event?.(partUpdatedEvent("session-1", "text"));
+      await waitUntilStatusContains(statusTool, "type=RESUME");
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("state=tracking");
+      expect(status).toContain("totals warns=1 resumes=1 aborts=0");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("records completed turn duration stats under resolved agent", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeDurationConfig(tempDir, { enabled: false });
+      const clock = restoreDateNow.clock;
+      const client = createPluginClient({ sessionMetadata: { agent: "coder" } });
+      const plugin = await createPlugin(tempDir, client.client);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await waitForMetadata(client);
+      clock.now = 7_000;
+      await plugin.event?.(idleEvent("session-1"));
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("durationCount=1");
+      expect(status).toContain("durationP50Ms=6000");
+      expect(status).toContain("durationP95Ms=6000");
+      expect(status).toContain("durationMaxMs=6000");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function createPlugin(tempDir: string, client: PluginClient): Promise<Awaited<ReturnType<Plugin>>> {
@@ -336,6 +446,20 @@ function idleEvent(sessionID: string): PluginEvent {
   } as PluginEvent;
 }
 
+function partUpdatedEvent(sessionID: string, kind = "text"): PluginEvent {
+  return {
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          sessionID,
+          kind,
+        },
+      },
+    },
+  } as PluginEvent;
+}
+
 function deletedEvent(sessionID: string): PluginEvent {
   return {
     event: {
@@ -371,6 +495,23 @@ async function waitForMetadata(
 ): Promise<void> {
   await waitUntil(() => client.getSessionCalls >= expectedCalls);
   await sleep(0);
+}
+
+async function waitUntilStatusContains(statusTool: StatusTool, needle: string): Promise<void> {
+  const deadline = originalNow() + 500;
+
+  while (true) {
+    const status = await statusTool.execute({ verbose: true });
+    if (status.includes(needle)) {
+      return;
+    }
+
+    if (originalNow() > deadline) {
+      throw new Error(`Timed out waiting for status containing: ${needle}`);
+    }
+
+    await sleep(1);
+  }
 }
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
