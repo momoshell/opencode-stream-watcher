@@ -26,6 +26,7 @@ import {
   createWatchdogStatusTool,
   recordRecentWatchdogTransitions,
 } from "./tools.js";
+import { WatchdogStats } from "./stats.js";
 import type {
   RecentWatchdogEvent,
   StallTransition,
@@ -46,12 +47,13 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
   const trackedSessions = createTrackedSessions();
   const lastTurnMsBySession = new Map<string, number>();
   const recentEvents: RecentWatchdogEvent[] = [];
+  const stats = new WatchdogStats();
   const config = await loadWatchdogConfig({
     projectRoot: deriveProjectRoot(project, directory, worktree),
     logger: createConfigLogger(client),
   });
 
-  startTickLoop(client, trackedSessions, recentEvents, config);
+  startTickLoop(client, trackedSessions, recentEvents, stats, config);
 
   await safeLog(client, {
     service: SERVICE,
@@ -65,6 +67,7 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
         trackedSessions,
         abortSession: (sessionID) => abortSession(client, sessionID),
         logAbort: async ({ result, lastPartKind }) => {
+          stats.recordAbort(result.agent);
           await safeLog(client, buildIncidentLogEntry({
             stage: "ABORT",
             sessionID: result.sessionID,
@@ -74,7 +77,11 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
           }));
         },
       }),
-      watchdog_status: createWatchdogStatusTool({ trackedSessions, recentEvents }),
+      watchdog_status: createWatchdogStatusTool({
+        trackedSessions,
+        recentEvents,
+        getStatsSnapshot: () => stats.snapshot(),
+      }),
     },
     event: async ({ event }) => {
       switch (event.type) {
@@ -101,6 +108,7 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
 
         case "message.part.updated": {
           const sessionID = event.properties.part.sessionID;
+          const previousState = trackedSessions.get(sessionID)?.state;
           const previousResumeStartedAt = trackedSessions.get(sessionID)?.resumeStartedAt;
           const tracked = recordPartActivity(
             trackedSessions,
@@ -109,18 +117,28 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
           );
 
           if (
-            config.toast &&
             tracked &&
-            tracked.state === "warned" &&
-            previousResumeStartedAt === undefined &&
-            tracked.resumeStartedAt !== undefined
+            previousState === "warned" &&
+            previousResumeStartedAt === undefined
           ) {
-            await safeToast(client, buildResumeToastBody({
-              sessionID: tracked.sessionID,
-              slug: tracked.slug,
-              agent: tracked.agent,
-              resumedAfterMs: Math.max(0, tracked.resumeStartedAt - tracked.stateSince),
-            }));
+            const resumeStartedAt = tracked.resumeStartedAt ?? Math.max(Date.now(), tracked.stateSince + 1);
+
+            if (tracked.resumeStartedAt === undefined) {
+              tracked.resumeStartedAt = resumeStartedAt;
+            }
+
+            if (tracked.state === "warned") {
+              stats.recordResume(tracked.agent);
+            }
+
+            if (config.toast && tracked.state === "warned") {
+              await safeToast(client, buildResumeToastBody({
+                sessionID: tracked.sessionID,
+                slug: tracked.slug,
+                agent: tracked.agent,
+                resumedAfterMs: Math.max(0, resumeStartedAt - tracked.stateSince),
+              }));
+            }
           }
 
           return;
@@ -131,6 +149,7 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
             client,
             trackedSessions,
             lastTurnMsBySession,
+            stats,
             event.properties.sessionID,
             config,
           );
@@ -177,6 +196,7 @@ async function handleSessionIdle(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
   lastTurnMsBySession: Map<string, number>,
+  stats: WatchdogStats,
   sessionID: string | undefined,
   config: Pick<WatchdogConfig, "duration" | "log" | "toast" | "perAgent">,
 ): Promise<void> {
@@ -193,6 +213,7 @@ async function handleSessionIdle(
   const durationMs = Math.max(0, Date.now() - tracked.callStart);
   tracked.lastTurnMs = durationMs;
   lastTurnMsBySession.set(sessionID, durationMs);
+  stats.recordDuration(tracked.agent, durationMs);
 
   const durationConfig = resolveDurationConfig(tracked, config);
   if (durationConfig.enabled) {
@@ -259,6 +280,7 @@ function startTickLoop(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
   recentEvents: RecentWatchdogEvent[],
+  stats: WatchdogStats,
   config: Pick<
     WatchdogConfig,
     "tickMs" | "warnThresholdMs" | "abortThresholdMs" | "log" | "toast" | "perAgent"
@@ -274,8 +296,9 @@ function startTickLoop(
     }
 
     recordRecentWatchdogTransitions(recentEvents, transitions);
+    recordWarnStats(stats, transitions);
 
-    void emitTickTransitions(client, transitions, config).catch(() => undefined);
+    void emitTickTransitions(client, transitions, stats, config).catch(() => undefined);
   }, config.tickMs);
 
   activeTickLoop = { interval };
@@ -321,6 +344,7 @@ async function getSessionMetadata(
 async function emitTickTransitions(
   client: PluginClient,
   transitions: StallTransition[],
+  stats: WatchdogStats,
   config: Pick<WatchdogConfig, "log" | "toast">,
 ): Promise<void> {
   for (const transition of transitions) {
@@ -329,6 +353,8 @@ async function emitTickTransitions(
       if (!aborted) {
         continue;
       }
+
+      stats.recordAbort(transition.tracked.agent);
     }
 
     if (config.log) {
@@ -358,6 +384,14 @@ async function emitTickTransitions(
         agent: transition.tracked.agent,
         idleMs: transition.idleMs,
       }));
+    }
+  }
+}
+
+function recordWarnStats(stats: WatchdogStats, transitions: readonly StallTransition[]): void {
+  for (const transition of transitions) {
+    if (transition.to === "warned") {
+      stats.recordWarn(transition.tracked.agent);
     }
   }
 }

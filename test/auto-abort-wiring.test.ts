@@ -14,6 +14,15 @@ type ThresholdScanConfig = Pick<WatchdogConfig, "warnThresholdMs" | "abortThresh
 type PluginInput = Parameters<Plugin>[0];
 type PluginClient = PluginInput["client"];
 type PluginEvent = Parameters<NonNullable<Awaited<ReturnType<Plugin>>["event"]>>[0];
+type StatusTool = {
+  execute: (args: { verbose?: boolean }) => Promise<string>;
+};
+type AbortTool = {
+  execute: (
+    args: { sessionID?: string },
+    context: { metadata: (input: { metadata: Record<string, string> }) => void },
+  ) => Promise<string>;
+};
 type ToastBody = {
   title?: string;
   message: string;
@@ -131,6 +140,7 @@ describe("auto-abort wiring", () => {
         project: tempDir,
         worktree: tempDir,
       } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
 
       await plugin.event?.(busyEvent("session-1"));
       await waitUntil(() => client.toastBodies.some((body) => body.title === "🛑 Aborted stalled stream"));
@@ -157,6 +167,7 @@ describe("auto-abort wiring", () => {
         variant: "error",
         duration: 8000,
       }]);
+      expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=1");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -183,6 +194,7 @@ describe("auto-abort wiring", () => {
         project: tempDir,
         worktree: tempDir,
       } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
 
       await plugin.event?.(busyEvent("session-1"));
       await waitUntil(() => client.abortedSessions.includes("session-1"));
@@ -191,6 +203,89 @@ describe("auto-abort wiring", () => {
       expect(client.abortedSessions).toEqual(["session-1"]);
       expect(client.toastBodies).toEqual([]);
       expect(client.logBodies.some((entry) => entry.message === "ABORT")).toBe(false);
+      expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=0");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("counts manual abort only after SDK abort success", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+
+    try {
+      await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+        "stream-watchdog": {
+          warnThresholdMs: 90_000,
+          abortThresholdMs: 0,
+          tickMs: 10,
+          log: true,
+          toast: false,
+        },
+      }));
+
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+      const abortTool = plugin.tool?.watchdog_abort as AbortTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await sleep(0);
+      await abortTool.execute(
+        { sessionID: "session-1" },
+        { metadata: () => undefined },
+      );
+
+      expect(client.abortedSessions).toEqual(["session-1"]);
+      expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=1");
+      expect(await statusTool.execute({ verbose: true })).toContain("byAgent agent=coder warns=0 resumes=0 aborts=1");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not count manual abort when SDK abort fails", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+
+    try {
+      await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+        "stream-watchdog": {
+          warnThresholdMs: 90_000,
+          abortThresholdMs: 0,
+          tickMs: 10,
+          log: true,
+          toast: false,
+        },
+      }));
+
+      const client = createPluginClient({
+        abortSucceeds: false,
+        sessionMetadata: { agent: "coder" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+      const abortTool = plugin.tool?.watchdog_abort as AbortTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await sleep(0);
+      await abortTool.execute(
+        { sessionID: "session-1" },
+        { metadata: () => undefined },
+      );
+
+      expect(client.abortedSessions).toEqual(["session-1"]);
+      expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=0");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
