@@ -29,3 +29,6 @@ jobs:
 
       - name: Build
         run: bunx tsc
+
+      - name: Test
+        run: bun run test
