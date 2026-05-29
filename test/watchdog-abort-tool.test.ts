@@ -74,6 +74,63 @@ describe("watchdog_abort tool", () => {
     }]);
   });
 
+  test("returns aborted false metadata when the abort call throws", async () => {
+    const sessions = new Map<string, TrackedSession>([
+      ["session-throws", trackedSession({ sessionID: "session-throws", lastActivity: 1_000 })],
+    ]);
+    const metadataCalls: Array<{ title?: string; metadata?: Record<string, unknown> }> = [];
+    const tool = createWatchdogAbortTool({
+      trackedSessions: sessions,
+      now: () => 6_000,
+      abortSession: async () => {
+        throw new Error("abort failed");
+      },
+    });
+
+    const output = await tool.execute({ sessionID: "session-throws" }, toolContext(metadataCalls));
+
+    expect(output).toBe(JSON.stringify({
+      aborted: false,
+      sessionID: "session-throws",
+      idleMs: 5_000,
+    }));
+    expect(metadataCalls).toEqual([{
+      metadata: {
+        aborted: false,
+        sessionID: "session-throws",
+        idleMs: 5_000,
+      },
+    }]);
+  });
+
+  test("returns empty aborted false metadata when no target exists", async () => {
+    const metadataCalls: Array<{ title?: string; metadata?: Record<string, unknown> }> = [];
+    let abortCalls = 0;
+    const tool = createWatchdogAbortTool({
+      trackedSessions: new Map(),
+      abortSession: async () => {
+        abortCalls += 1;
+        return true;
+      },
+    });
+
+    const output = await tool.execute({}, toolContext(metadataCalls));
+
+    expect(abortCalls).toBe(0);
+    expect(output).toBe(JSON.stringify({
+      aborted: false,
+      sessionID: "",
+      idleMs: 0,
+    }));
+    expect(metadataCalls).toEqual([{
+      metadata: {
+        aborted: false,
+        sessionID: "",
+        idleMs: 0,
+      },
+    }]);
+  });
+
   test("aborts an explicit untracked session without claiming tracked metadata", async () => {
     const abortedSessions: string[] = [];
 
@@ -175,4 +232,19 @@ function trackedSession(input: {
     state: "tracking",
     stateSince: input.lastActivity,
   };
+}
+
+function toolContext(metadataCalls: Array<{ title?: string; metadata?: Record<string, unknown> }>): ToolContext {
+  return {
+    sessionID: "parent-session",
+    messageID: "message-1",
+    agent: "huginn",
+    directory: "/tmp/project",
+    worktree: "/tmp/project",
+    abort: new AbortController().signal,
+    metadata: (input) => {
+      metadataCalls.push(input);
+    },
+    ask: async () => undefined,
+  } satisfies ToolContext;
 }
