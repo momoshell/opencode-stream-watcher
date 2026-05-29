@@ -103,9 +103,9 @@ async function updatePart(hooks, sessionID, kind = "assistant") {
 }
 
 async function waitFor(predicate) {
-  const deadline = Date.now() + 500;
+  const deadline = performance.now() + 500;
 
-  while (Date.now() < deadline) {
+  while (performance.now() < deadline) {
     if (predicate()) {
       return;
     }
@@ -158,20 +158,33 @@ describe("StreamWatchdog WARN gating", () => {
   });
 
   test("non-WARN transitions do not emit additional toasts", async () => {
-    const { hooks, toasts } = await startPlugin({
-      warnThresholdMs: 5,
-      abortThresholdMs: 10,
-      tickMs: 5,
-      toast: true,
-      log: false,
-    });
+    const realDateNow = Date.now;
+    let fakeNow = realDateNow();
+    Date.now = () => fakeNow;
+    let hooks;
+    let toasts;
 
-    await startBusySession(hooks, "session-abort-no-toast");
-    await waitFor(() => toasts.length === 1);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await stopSession(hooks, "session-abort-no-toast");
+    try {
+      ({ hooks, toasts } = await startPlugin({
+        warnThresholdMs: 50,
+        abortThresholdMs: 100,
+        tickMs: 5,
+        toast: true,
+        log: false,
+      }));
 
-    expect(toasts).toHaveLength(1);
+      await startBusySession(hooks, "session-abort-no-toast");
+      fakeNow += 60;
+      await waitFor(() => toasts.length === 1);
+
+      fakeNow += 60;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await stopSession(hooks, "session-abort-no-toast");
+
+      expect(toasts).toHaveLength(1);
+    } finally {
+      Date.now = realDateNow;
+    }
   });
 
   test("does not emit RESUME success toast without prior WARN", async () => {
