@@ -262,12 +262,9 @@ Details and the *why* behind each decision: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Roadmap
 
-- **v0.1 — Notify-only**: WARN + RESUME toasts, structured logs, no default auto-abort.
-- **v0.2 — Selective control** *(current)*: per-agent thresholds, `watchdog_status` + `watchdog_abort`, default 10-minute auto-abort with explicit opt-out.
-- **Later v0.2.x**: more turn-duration tuning based on real-world usage.
-- **v1.0 — Trusted defaults**: stats counters and empirical threshold guidance.
+Current releases already include the v1 docs shape described above: WARN/RESUME/ABORT toasts, structured logs, per-agent thresholds, `watchdog_status`, `watchdog_abort`, turn-duration reporting, stats counters, and empirical threshold guidance.
 
-Why the milestones look this way and what gates a default change → [`docs/DESIGN.md` § Versioning](docs/DESIGN.md#versioning). Live tracking on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).
+The scope stays intentionally narrow: detect silent stalls, surface them clearly, and optionally abort them. Live tracking stays on the [project board](https://github.com/users/momoshell/projects/2/views/1) and [milestones](https://github.com/momoshell/opencode-stream-watcher/milestones).
 
 ## Contributing
 
