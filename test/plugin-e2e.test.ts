@@ -48,6 +48,18 @@ describe("StreamWatchdog plugin e2e", () => {
       await plugin.event?.(busyEvent("session-1"));
       await waitForMetadata(client);
 
+      expect(findTrackingStartLog(client.logBodies)).toEqual({
+        service: "stream-watchdog",
+        level: "info",
+        message: "tracking-start",
+        extra: {
+          sessionID: "session-1",
+          agent: "unknown",
+          idleSeconds: 0,
+          lastPartKind: "unknown",
+        },
+      });
+
       clock.now = 32_200;
       await waitUntil(() =>
         findIncidentLog(client.logBodies, "WARN") !== undefined &&
@@ -195,15 +207,53 @@ describe("StreamWatchdog plugin e2e", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("suppresses tracking-start log when config log is false", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir, { log: false });
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "quiet-logs" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-no-log"));
+      await waitForMetadata(client);
+
+      expect(findTrackingStartLog(client.logBodies)).toBeUndefined();
+
+      const trackedStatus = await statusTool.execute({ verbose: true });
+      expect(trackedStatus).toContain("stream-watchdog: tracking 1 session.");
+      expect(trackedStatus).toContain("sessionID=session-no-log");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
-async function writeWatchdogConfig(tempDir: string): Promise<void> {
+async function writeWatchdogConfig(
+  tempDir: string,
+  options: {
+    log?: boolean;
+  } = {},
+): Promise<void> {
+  const { log = true } = options;
+
   await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
     "stream-watchdog": {
       warnThresholdMs: 31_100,
       abortThresholdMs: 31_300,
       tickMs: 5,
-      log: true,
+      log,
       toast: true,
       duration: {
         enabled: false,
@@ -301,6 +351,10 @@ function sessionErrorEvent(sessionID: string): PluginEvent {
 
 function findIncidentLog(logBodies: readonly LogBody[], message: "WARN" | "RESUME" | "ABORT"): LogBody | undefined {
   return logBodies.find((entry) => entry.message === message);
+}
+
+function findTrackingStartLog(logBodies: readonly LogBody[]): LogBody | undefined {
+  return logBodies.find((entry) => entry.message === "tracking-start");
 }
 
 function findToastByTitle(toastBodies: readonly ToastBody[], title: string): ToastBody | undefined {

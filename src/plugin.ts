@@ -97,13 +97,15 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
           });
           void enrichSessionMetadata(client, trackedSessions, sessionID);
 
-          await safeLog(client, buildIncidentLogEntry({
-            stage: "tracking-start",
-            sessionID: tracked.sessionID,
-            agent: tracked.agent ?? "unknown",
-            idleMs: 0,
-            lastPartKind: tracked.lastPartKind,
-          }));
+          if (config.log) {
+            await safeLog(client, buildIncidentLogEntry({
+              stage: "tracking-start",
+              sessionID: tracked.sessionID,
+              agent: tracked.agent ?? "unknown",
+              idleMs: 0,
+              lastPartKind: tracked.lastPartKind,
+            }));
+          }
           return;
         }
 
