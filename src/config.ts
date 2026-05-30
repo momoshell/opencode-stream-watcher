@@ -117,12 +117,21 @@ function clonePerAgentConfig(
   const cloned: WatchdogConfig["perAgent"] = {};
 
   for (const [agentName, agentConfig] of Object.entries(perAgent)) {
-    const clonedAgentConfig: PerAgentThresholdConfig = { ...agentConfig };
-    if (agentConfig.duration !== undefined) {
-      clonedAgentConfig.duration = { ...agentConfig.duration };
-    }
+    cloned[agentName] = clonePerAgentThresholdConfig(agentConfig);
+  }
 
-    cloned[agentName] = clonedAgentConfig;
+  return cloned;
+}
+
+function clonePerAgentThresholdConfig(
+  config: PerAgentThresholdConfig | undefined,
+): PerAgentThresholdConfig {
+  const cloned: PerAgentThresholdConfig = {
+    ...(config ?? {}),
+  };
+
+  if (config?.duration !== undefined) {
+    cloned.duration = { ...config.duration };
   }
 
   return cloned;
@@ -310,13 +319,7 @@ function mergePerAgentConfig(
       continue;
     }
 
-    const mergedAgentConfig: PerAgentThresholdConfig = {
-      ...(config.perAgent[agentName] ?? {}),
-    };
-    const existingDuration = config.perAgent[agentName]?.duration;
-    if (existingDuration !== undefined) {
-      mergedAgentConfig.duration = { ...existingDuration };
-    }
+    const mergedAgentConfig = clonePerAgentThresholdConfig(config.perAgent[agentName]);
 
     for (const key of PER_AGENT_THRESHOLD_CONFIG_KEYS) {
       mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, key, pathPrefix, logger);
