@@ -36,6 +36,8 @@ export function startTracking(
     slug: metadata.slug,
     callStart: now,
     lastActivity: now,
+    mutated: false,
+    endedWithBlocker: false,
     lastTurnMs: options.lastTurnMs,
     resumeStartedAt: undefined,
     state: "tracking",
@@ -88,6 +90,14 @@ export function recordPartActivity(
   const partKind = getTrackedPartKind(part);
   if (partKind) {
     tracked.lastPartKind = partKind;
+  }
+
+  if (isCompletedEditToolPart(part)) {
+    tracked.mutated = true;
+  }
+
+  if (part.type === "text" && typeof part.text === "string") {
+    tracked.endedWithBlocker = part.text.trimStart().startsWith("BLOCKER:");
   }
 
   return tracked;
@@ -253,6 +263,8 @@ export function snapshotTrackedSession(tracked: TrackedSession): TrackedSession 
     slug: tracked.slug,
     callStart: tracked.callStart,
     lastActivity: tracked.lastActivity,
+    mutated: tracked.mutated,
+    endedWithBlocker: tracked.endedWithBlocker,
     resumeStartedAt: tracked.resumeStartedAt,
     lastPartKind: tracked.lastPartKind,
     lastTurnMs: tracked.lastTurnMs,
@@ -269,5 +281,27 @@ function getTrackedPartKind(part: Part): LastPartKind | undefined {
       return part.type;
     default:
       return undefined;
+  }
+}
+
+function isCompletedEditToolPart(part: Part): boolean {
+  return (
+    part.type === "tool" &&
+    isEditTool(part.tool) &&
+    part.state.status === "completed"
+  );
+}
+
+function isEditTool(tool: string): boolean {
+  switch (tool) {
+    case "edit":
+    case "write":
+    case "patch":
+    case "apply_patch":
+    case "svelte-file-editor":
+    case "svelte_file_editor":
+      return true;
+    default:
+      return false;
   }
 }
