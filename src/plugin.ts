@@ -6,6 +6,7 @@ import {
   recordPartActivity,
   resolveDurationConfig,
   scanTrackedSessions,
+  snapshotTrackedSession,
   startTracking,
   stopTracking,
   type SessionMetadata,
@@ -289,16 +290,26 @@ function startTickLoop(
   stopTickLoop();
 
   const interval = globalThis.setInterval(() => {
+    const snapshots = snapshotSessions(trackedSessions);
     const transitions = scanTrackedSessions(trackedSessions, config);
 
     if (transitions.length === 0) {
       return;
     }
 
-    recordRecentWatchdogTransitions(recentEvents, transitions);
-    recordWarnStats(stats, transitions);
+    const immediateTransitions = transitions.filter((transition) => transition.to !== "aborted");
+    recordRecentWatchdogTransitions(recentEvents, immediateTransitions);
+    recordWarnStats(stats, immediateTransitions);
 
-    void emitTickTransitions(client, transitions, stats, config).catch(() => undefined);
+    void emitTickTransitions(
+      client,
+      trackedSessions,
+      recentEvents,
+      snapshots,
+      transitions,
+      stats,
+      config,
+    ).catch(() => undefined);
   }, config.tickMs);
 
   activeTickLoop = { interval };
@@ -343,6 +354,9 @@ async function getSessionMetadata(
 
 async function emitTickTransitions(
   client: PluginClient,
+  trackedSessions: Map<string, TrackedSession>,
+  recentEvents: RecentWatchdogEvent[],
+  snapshots: Map<string, TrackedSession>,
   transitions: StallTransition[],
   stats: WatchdogStats,
   config: Pick<WatchdogConfig, "log" | "toast">,
@@ -351,9 +365,11 @@ async function emitTickTransitions(
     if (transition.to === "aborted") {
       const aborted = await abortSession(client, transition.sessionID);
       if (!aborted) {
+        restoreAbortedSession(trackedSessions, snapshots, transition);
         continue;
       }
 
+      recordRecentWatchdogTransitions(recentEvents, [transition]);
       stats.recordAbort(transition.tracked.agent);
     }
 
@@ -386,6 +402,65 @@ async function emitTickTransitions(
       }));
     }
   }
+}
+
+function snapshotSessions(sessions: Map<string, TrackedSession>): Map<string, TrackedSession> {
+  const snapshots = new Map<string, TrackedSession>();
+
+  for (const [sessionID, tracked] of sessions) {
+    snapshots.set(sessionID, snapshotTrackedSession(tracked));
+  }
+
+  return snapshots;
+}
+
+function restoreAbortedSession(
+  sessions: Map<string, TrackedSession>,
+  snapshots: Map<string, TrackedSession>,
+  transition: StallTransition,
+): void {
+  const current = sessions.get(transition.sessionID);
+  const previous = snapshots.get(transition.sessionID);
+
+  if (!current || !previous) {
+    return;
+  }
+
+  if (current.state !== "aborted" || current.stateSince !== transition.at) {
+    return;
+  }
+
+  const latestLastActivity = Math.max(previous.lastActivity, current.lastActivity);
+  const resumeStartedAt = getRestoredResumeStartedAt(previous, latestLastActivity);
+
+  Object.assign(current, {
+    ...previous,
+    agent: current.agent ?? previous.agent,
+    slug: current.slug ?? previous.slug,
+    lastActivity: latestLastActivity,
+    resumeStartedAt,
+    lastPartKind: current.lastPartKind ?? previous.lastPartKind,
+    lastTurnMs: current.lastTurnMs ?? previous.lastTurnMs,
+  });
+}
+
+function getRestoredResumeStartedAt(
+  previous: TrackedSession,
+  latestLastActivity: number,
+): number | undefined {
+  if (previous.resumeStartedAt !== undefined) {
+    return previous.resumeStartedAt;
+  }
+
+  if (
+    previous.state === "warned" &&
+    latestLastActivity > previous.lastActivity &&
+    latestLastActivity > previous.stateSince
+  ) {
+    return latestLastActivity;
+  }
+
+  return undefined;
 }
 
 function recordWarnStats(stats: WatchdogStats, transitions: readonly StallTransition[]): void {

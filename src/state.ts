@@ -246,7 +246,7 @@ function getIdleMs(tracked: TrackedSession, now: number): number {
   return Math.max(0, now - tracked.lastActivity);
 }
 
-function snapshotTrackedSession(tracked: TrackedSession): TrackedSession {
+export function snapshotTrackedSession(tracked: TrackedSession): TrackedSession {
   return {
     sessionID: tracked.sessionID,
     agent: tracked.agent,
