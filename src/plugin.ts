@@ -67,6 +67,9 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
       watchdog_abort: createWatchdogAbortTool({
         trackedSessions,
         abortSession: (sessionID) => abortSession(client, sessionID),
+        onAbortSuccess: (sessionID) => {
+          stopTracking(trackedSessions, sessionID);
+        },
         logAbort: async ({ result, lastPartKind }) => {
           stats.recordAbort(result.agent);
           await safeLog(client, buildIncidentLogEntry({

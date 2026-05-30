@@ -23,6 +23,7 @@ interface WatchdogAbortToolInput {
   trackedSessions: ReadonlyMap<string, TrackedSession>;
   abortSession: (sessionID: string) => Promise<boolean>;
   logAbort?: (entry: WatchdogAbortLogEntry) => Promise<void>;
+  onAbortSuccess?: (sessionID: string) => Promise<void> | void;
   now?: () => number;
 }
 
@@ -106,6 +107,7 @@ export async function executeWatchdogAbort(
   const result = toAbortResult(target, aborted);
 
   if (aborted) {
+    await tryHandleAbortSuccess(input.onAbortSuccess, target.sessionID);
     await tryLogAbort(input.logAbort, { result, lastPartKind: target.lastPartKind });
   }
 
@@ -241,6 +243,21 @@ async function tryLogAbort(
     await logAbort(entry);
   } catch {
     // Logging is best-effort and must never interrupt tool behavior.
+  }
+}
+
+async function tryHandleAbortSuccess(
+  onAbortSuccess: ((sessionID: string) => Promise<void> | void) | undefined,
+  sessionID: string,
+): Promise<void> {
+  if (!onAbortSuccess) {
+    return;
+  }
+
+  try {
+    await onAbortSuccess(sessionID);
+  } catch {
+    // Reconciliation is best-effort and must never interrupt tool behavior.
   }
 }
 

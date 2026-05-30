@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Successful `watchdog_abort` calls now clear the aborted session from active watchdog tracking/status so it is not auto-aborted again.
+
 ## 1.0.0
 
 - **BREAKING CHANGE:** `stream-watchdog.abortThresholdMs` now defaults to `600000` (10 minutes) instead of `0`. To keep notify-only behavior, set `"abortThresholdMs": 0` explicitly.
