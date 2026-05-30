@@ -25,6 +25,7 @@ import {
 import {
   createWatchdogAbortTool,
   createWatchdogStatusTool,
+  recordRecentWatchdogEvent,
   recordRecentWatchdogTransitions,
 } from "./tools.js";
 import { WatchdogStats } from "./stats.js";
@@ -36,6 +37,15 @@ import type {
 } from "./types.js";
 
 const SERVICE = "stream-watchdog";
+const NOOP_WATCHED_AGENTS = new Set([
+  "coder",
+  "backend-specialist",
+  "frontend-specialist",
+  "devops-specialist",
+  "test-engineer",
+  "code-simplifier",
+  "svelte-file-editor",
+]);
 type PluginClient = Parameters<Plugin>[0]["client"];
 
 type ActiveTickLoop = {
@@ -154,6 +164,7 @@ export const StreamWatchdog: Plugin = async ({ project, client, directory, workt
           await handleSessionIdle(
             client,
             trackedSessions,
+            recentEvents,
             lastTurnMsBySession,
             stats,
             event.properties.sessionID,
@@ -201,6 +212,7 @@ function deriveProjectRoot(project: unknown, directory: unknown, worktree: unkno
 async function handleSessionIdle(
   client: PluginClient,
   trackedSessions: Map<string, TrackedSession>,
+  recentEvents: RecentWatchdogEvent[],
   lastTurnMsBySession: Map<string, number>,
   stats: WatchdogStats,
   sessionID: string | undefined,
@@ -216,7 +228,8 @@ async function handleSessionIdle(
     return;
   }
 
-  const durationMs = Math.max(0, Date.now() - tracked.callStart);
+  const now = Date.now();
+  const durationMs = Math.max(0, now - tracked.callStart);
   tracked.lastTurnMs = durationMs;
   lastTurnMsBySession.set(sessionID, durationMs);
   stats.recordDuration(tracked.agent, durationMs);
@@ -240,7 +253,35 @@ async function handleSessionIdle(
     }
   }
 
+  recordNoopIfNeeded(recentEvents, tracked, now);
   stopTracking(trackedSessions, sessionID);
+}
+
+function recordNoopIfNeeded(
+  recentEvents: RecentWatchdogEvent[],
+  tracked: TrackedSession,
+  now: number,
+): void {
+  if (!shouldRecordNoop(tracked)) {
+    return;
+  }
+
+  recordRecentWatchdogEvent(recentEvents, {
+    time: now,
+    type: "NOOP",
+    sessionID: tracked.sessionID,
+    agent: tracked.agent ?? "unknown",
+  });
+}
+
+function shouldRecordNoop(tracked: TrackedSession): boolean {
+  return (
+    tracked.state !== "aborted" &&
+    tracked.agent !== undefined &&
+    NOOP_WATCHED_AGENTS.has(tracked.agent) &&
+    tracked.mutated !== true &&
+    tracked.endedWithBlocker !== true
+  );
 }
 
 function readProjectRoot(project: unknown): string | undefined {
@@ -437,12 +478,17 @@ function restoreAbortedSession(
 
   const latestLastActivity = Math.max(previous.lastActivity, current.lastActivity);
   const resumeStartedAt = getRestoredResumeStartedAt(previous, latestLastActivity);
+  const endedWithBlocker = current.lastActivity > previous.lastActivity
+    ? current.endedWithBlocker
+    : previous.endedWithBlocker;
 
   Object.assign(current, {
     ...previous,
     agent: current.agent ?? previous.agent,
     slug: current.slug ?? previous.slug,
     lastActivity: latestLastActivity,
+    mutated: current.mutated === true || previous.mutated === true,
+    endedWithBlocker,
     resumeStartedAt,
     lastPartKind: current.lastPartKind ?? previous.lastPartKind,
     lastTurnMs: current.lastTurnMs ?? previous.lastTurnMs,

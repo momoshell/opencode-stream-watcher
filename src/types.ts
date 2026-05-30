@@ -32,6 +32,8 @@ export interface TrackedSession {
   slug?: string;
   callStart: number;
   lastActivity: number;
+  mutated?: boolean;
+  endedWithBlocker?: boolean;
   resumeStartedAt?: number;
   lastPartKind?: LastPartKind;
   lastTurnMs?: number;
@@ -48,7 +50,7 @@ export interface StallTransition {
   tracked: TrackedSession;
 }
 
-export type WatchdogEventType = "WARN" | "RESUME" | "ABORT";
+export type WatchdogEventType = "WARN" | "RESUME" | "ABORT" | "NOOP";
 
 export interface RecentWatchdogEvent {
   time: number;

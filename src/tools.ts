@@ -119,13 +119,20 @@ export function recordRecentWatchdogTransitions(
   transitions: readonly StallTransition[],
 ): void {
   for (const transition of transitions) {
-    recentEvents.push({
+    recordRecentWatchdogEvent(recentEvents, {
       time: transition.at,
       type: toWatchdogEventType(transition),
       sessionID: transition.sessionID,
       agent: transition.tracked.agent ?? "unknown",
     });
   }
+}
+
+export function recordRecentWatchdogEvent(
+  recentEvents: RecentWatchdogEvent[],
+  event: RecentWatchdogEvent,
+): void {
+  recentEvents.push(event);
 
   while (recentEvents.length > MAX_RECENT_EVENTS) {
     recentEvents.shift();
