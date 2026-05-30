@@ -16,8 +16,9 @@ src/
   types.ts         # WatchdogConfig, TrackedSession, StallState
   config.ts        # config loader, defaults, validation
   state.ts         # per-session state machine + tick loop
+  stats.ts         # in-memory counters and duration samples
   notify.ts        # toast + app.log helpers
-  tools.ts         # watchdog_status, watchdog_abort (v0.2+)
+  tools.ts         # watchdog_status, watchdog_abort
 docs/
   DESIGN.md        # the *why*
   THRESHOLDS.md    # empirical guidance (v1.0+)
@@ -44,7 +45,7 @@ These are deliberate non-features. Don't propose them unless an issue exists:
 
 - ❌ macOS system notifications (`osascript`) — toasts are sufficient and contextual to opencode.
 - ❌ Terminal bell (`\a`) — low signal, annoying, unclear if opencode passes it through.
-- ❌ Auto-abort as a v0.1 default — opt-in until v1.0. Users must trust the watchdog first.
+- ❌ Expanding beyond the narrow stream-stall problem — keep the plugin focused on detection, surfacing, and optional abort.
 - ❌ Custom log files — `client.app.log` writes to opencode's existing log infrastructure.
 - ❌ HTTP/WebSocket/external integrations — local plugin only.
 - ❌ Persistent state across opencode restarts — in-memory only, ephemeral by design.

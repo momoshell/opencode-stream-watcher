@@ -62,6 +62,7 @@ export const StreamWatchdog: Plugin = async (ctx) => {
 
 | Method | Purpose |
 |---|---|
+| `client.session.get({ path: { id: sessionID } })` | Re-read session metadata before surfacing status or aborting so tooling works from current SDK state |
 | `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel for default auto-abort and selective abort tooling |
 
 Current releases use the heartbeat events plus best-effort toasts, structured logs, and `client.session.abort()` when silence crosses the configured abort threshold.
@@ -109,8 +110,9 @@ State machine per tracked session:
 ```
 tracking ──(idle > warnMs)──► warned ──(activity resumes)──► tracking
    │                            │
-   │                            ├──(idle > abortMs && abortEnabled)──► aborted
+   ├──(idle > abortMs && abortEnabled)──► aborted
    │                            │
+   │                            ├──(idle > abortMs && abortEnabled)──► aborted
    ▼                            ▼
 session.idle / session.error / session.deleted   ──► (removed)
 ```
@@ -135,7 +137,8 @@ The earlier safeguard option ("external log-tailer") would work but has worse er
 - WARN triggers once `idleMs >= warnThresholdMs`.
 - After WARN, a session only re-arms once there has been more than 30 seconds of resumed activity and the session is no longer past the WARN threshold.
 - By default, `abortThresholdMs` is `600000` (10 minutes).
-- If `abortThresholdMs > 0`, the state machine can transition from `warned` to `aborted`, call `client.session.abort()`, and emit the ABORT incident surfaces.
+- If `abortThresholdMs > 0`, the state machine can transition from either `tracking` or `warned` to `aborted`, depending on whether the abort threshold lands before or after WARN.
+- Before tool-driven status or abort work, the plugin may re-read the live session through `client.session.get()` and then call `client.session.abort()` if the abort should proceed.
 - Setting `abortThresholdMs` to `0` is the explicit opt-out.
 
 ## UX
@@ -146,14 +149,14 @@ The earlier safeguard option ("external log-tailer") would work but has worse er
 |---|---|---|---|---|
 | WARN | warning | `⏸ Stream stalled` | 0 (sticky) | Toast body includes agent, session label, idle seconds, last part kind, and the Esc / Huginn selective-abort hint. |
 | RESUME | success | `▶ Stream recovered` | 4000ms | Toast body is `<agent> · <slug-or-sessionID> · resumed after <Xs>`. |
-| ABORT | error | `■ Stream aborted` | 8000ms | When auto-abort succeeds, the plugin aborts the session and surfaces an error toast plus structured log entry. |
-| Selective abort | error | `■ Stream aborted` | 8000ms | The same abort path is used when a foreground agent calls `watchdog_abort`. |
+| ABORT | error | `🛑 Aborted stalled stream` | 8000ms | When auto-abort succeeds, the plugin aborts the session and surfaces an error toast plus structured log entry. |
+| Selective abort | error | `🛑 Aborted stalled stream` | 8000ms | The same abort path is used when a foreground agent calls `watchdog_abort`. |
 
 ### De-duplication rules
 
 - One WARN per stall window. After WARN, re-arm only after >30s of resumed activity, then the next stall can trigger a fresh WARN.
 - RESUME fires only if a WARN preceded it in the same session lifetime.
-- ABORT state transitions only when `abortThresholdMs > 0` and the session is already in `warned` state.
+- ABORT state transitions only when `abortThresholdMs > 0`; they can occur from `tracking` or `warned` depending on threshold timing.
 
 ### Why Esc, not Ctrl+C
 
@@ -185,8 +188,8 @@ opencode auto-resolves from npm at startup and caches in `~/.cache/opencode/node
 ### Versioning
 
 - `0.1.x` — initial notify-first shape: one tick loop, WARN/RESUME toasts, structured logs, config-driven thresholds, no default auto-abort.
-- `0.2.x` — current shape: `watchdog_status` / `watchdog_abort`, successful programmatic aborts, and a default `abortThresholdMs` of `600000` with explicit opt-out via `0`.
-- `1.0.0` — planned: keep refining guidance and defaults based on real-world false-positive rates and threshold data.
+- `0.2.x` — added `watchdog_status` / `watchdog_abort`, successful programmatic aborts, and a default `abortThresholdMs` of `600000` with explicit opt-out via `0`.
+- `1.x` — current shape: trusted default auto-abort, stats counters, threshold guidance, and ongoing tuning based on real-world false-positive rates and threshold data.
 
 ### Maintenance
 
