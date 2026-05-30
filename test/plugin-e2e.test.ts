@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chdir, cwd } from "node:process";
 
 import { describe, expect, test } from "bun:test";
 import type { Plugin } from "@opencode-ai/plugin";
@@ -238,23 +239,209 @@ describe("StreamWatchdog plugin e2e", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("resolves config root fallback order via public plugin behavior", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-roots-"));
+    const worktreeDir = join(rootDir, "worktree");
+    const projectDir = join(rootDir, "project");
+    const initializerDir = join(rootDir, "initializer");
+    const fallbackCwdDir = join(rootDir, "cwd");
+    const restoreDateNow = mockDateNow(1_000);
+    const originalCwd = cwd();
+
+    try {
+      await mkdir(worktreeDir, { recursive: true });
+      await mkdir(projectDir, { recursive: true });
+      await mkdir(initializerDir, { recursive: true });
+      await mkdir(fallbackCwdDir, { recursive: true });
+
+      await writeWatchdogConfig(worktreeDir, { warnThresholdMs: 31_100, abortThresholdMs: 90_000 });
+      await writeWatchdogConfig(projectDir, { warnThresholdMs: 41_100, abortThresholdMs: 90_000 });
+      await writeWatchdogConfig(initializerDir, { warnThresholdMs: 51_100, abortThresholdMs: 90_000 });
+      await writeWatchdogConfig(fallbackCwdDir, { warnThresholdMs: 61_100, abortThresholdMs: 90_000 });
+
+      chdir(fallbackCwdDir);
+
+      const worktreeClient = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "root-worktree" },
+      });
+      const worktreePlugin = await StreamWatchdog({
+        client: worktreeClient.client,
+        directory: initializerDir,
+        project: { path: projectDir },
+        worktree: worktreeDir,
+      } satisfies PluginInput);
+
+      restoreDateNow.clock.now = 1_000;
+      await worktreePlugin.event?.(busyEvent("session-root-worktree"));
+      await waitForMetadata(worktreeClient);
+
+      restoreDateNow.clock.now = 32_200;
+      await waitUntil(() => findIncidentLog(worktreeClient.logBodies, "WARN") !== undefined);
+      expect(findIncidentLog(worktreeClient.logBodies, "WARN")?.extra?.idleSeconds).toBe(31);
+
+      const projectClient = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "root-project" },
+      });
+      const projectPlugin = await StreamWatchdog({
+        client: projectClient.client,
+        directory: initializerDir,
+        project: { root: projectDir },
+      } satisfies PluginInput);
+
+      restoreDateNow.clock.now = 101_000;
+      await projectPlugin.event?.(busyEvent("session-root-project"));
+      await waitForMetadata(projectClient);
+
+      restoreDateNow.clock.now = 142_200;
+      await waitUntil(() => findIncidentLog(projectClient.logBodies, "WARN") !== undefined);
+      expect(findIncidentLog(projectClient.logBodies, "WARN")?.extra?.idleSeconds).toBe(41);
+
+      const directoryClient = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "root-directory" },
+      });
+      const directoryPlugin = await StreamWatchdog({
+        client: directoryClient.client,
+        directory: initializerDir,
+        project: {},
+      } satisfies PluginInput);
+
+      restoreDateNow.clock.now = 201_000;
+      await directoryPlugin.event?.(busyEvent("session-root-directory"));
+      await waitForMetadata(directoryClient);
+
+      restoreDateNow.clock.now = 252_200;
+      await waitUntil(() => findIncidentLog(directoryClient.logBodies, "WARN") !== undefined);
+      expect(findIncidentLog(directoryClient.logBodies, "WARN")?.extra?.idleSeconds).toBe(51);
+
+      const cwdClient = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "root-cwd" },
+      });
+      const cwdPlugin = await StreamWatchdog({
+        client: cwdClient.client,
+        project: {},
+      } satisfies PluginInput);
+
+      restoreDateNow.clock.now = 301_000;
+      await cwdPlugin.event?.(busyEvent("session-root-cwd"));
+      await waitForMetadata(cwdClient);
+
+      restoreDateNow.clock.now = 362_200;
+      await waitUntil(() => findIncidentLog(cwdClient.logBodies, "WARN") !== undefined);
+      expect(findIncidentLog(cwdClient.logBodies, "WARN")?.extra?.idleSeconds).toBe(61);
+    } finally {
+      chdir(originalCwd);
+      restoreDateNow();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps setup and event handling alive when log/session/toast clients throw", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-failures-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir, { warnThresholdMs: 31_100, abortThresholdMs: 90_000 });
+      const client = createPluginClient({
+        throwOnLog: true,
+        throwOnSessionGet: true,
+        throwOnToast: true,
+      });
+
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-best-effort"));
+      await waitForMetadata(client);
+
+      const trackedStatus = await statusTool.execute({ verbose: true });
+      expect(trackedStatus).toContain("sessionID=session-best-effort");
+
+      restoreDateNow.clock.now = 32_200;
+      await sleep(30);
+
+      const statusAfterTick = await statusTool.execute({ verbose: true });
+      expect(statusAfterTick).toContain("sessionID=session-best-effort");
+      expect(statusAfterTick).toContain("totals warns=1 resumes=0 aborts=0");
+      expect(client.getSessionCalls).toBeGreaterThanOrEqual(1);
+      expect(client.logBodies).toHaveLength(0);
+      expect(client.toastBodies).toHaveLength(0);
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps unknown and untracked events harmless", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-events-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient();
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      const emptyStatus = await statusTool.execute({ verbose: true });
+
+      await plugin.event?.({
+        event: {
+          type: "unknown.event.type",
+          properties: {
+            sessionID: "unknown-session",
+          },
+        },
+      } as PluginEvent);
+      await plugin.event?.(partUpdatedEvent("untracked-session", "text"));
+
+      const statusAfterUnknowns = await statusTool.execute({ verbose: true });
+      expect(statusAfterUnknowns).toBe(emptyStatus);
+      expect(client.abortedSessions).toHaveLength(0);
+      expect(findTrackingStartLog(client.logBodies)).toBeUndefined();
+      expect(findIncidentLog(client.logBodies, "WARN")).toBeUndefined();
+      expect(client.toastBodies).toHaveLength(0);
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeWatchdogConfig(
   tempDir: string,
   options: {
     log?: boolean;
+    toast?: boolean;
+    warnThresholdMs?: number;
+    abortThresholdMs?: number;
+    tickMs?: number;
   } = {},
 ): Promise<void> {
-  const { log = true } = options;
+  const {
+    log = true,
+    toast = true,
+    warnThresholdMs = 31_100,
+    abortThresholdMs = 31_300,
+    tickMs = 5,
+  } = options;
 
   await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
     "stream-watchdog": {
-      warnThresholdMs: 31_100,
-      abortThresholdMs: 31_300,
-      tickMs: 5,
+      warnThresholdMs,
+      abortThresholdMs,
+      tickMs,
       log,
-      toast: true,
+      toast,
       duration: {
         enabled: false,
         minToastMs: 5_000,
@@ -266,6 +453,9 @@ async function writeWatchdogConfig(
 
 function createPluginClient(options: {
   sessionMetadata?: { agent?: string; slug?: string };
+  throwOnSessionGet?: boolean;
+  throwOnLog?: boolean;
+  throwOnToast?: boolean;
 } = {}): {
   client: PluginClient;
   abortedSessions: string[];
@@ -281,6 +471,10 @@ function createPluginClient(options: {
   const client = {
     app: {
       log: async ({ body }: { body: LogBody }) => {
+        if (options.throwOnLog) {
+          throw new Error("app.log unavailable");
+        }
+
         logBodies.push(body);
       },
     },
@@ -291,11 +485,20 @@ function createPluginClient(options: {
       },
       get: async () => {
         state.getSessionCalls += 1;
+
+        if (options.throwOnSessionGet) {
+          throw new Error("session.get unavailable");
+        }
+
         return { data: options.sessionMetadata ?? {} };
       },
     },
     tui: {
       showToast: async ({ body }: { body: ToastBody }) => {
+        if (options.throwOnToast) {
+          throw new Error("toast unavailable");
+        }
+
         toastBodies.push(body);
       },
     },
