@@ -92,6 +92,21 @@ function isSupportedKey<T extends string>(key: string, supportedKeys: readonly T
   return (supportedKeys as readonly string[]).includes(key);
 }
 
+function warnUnsupportedKeys<T extends string>(
+  source: Record<string, unknown>,
+  supportedKeys: readonly T[],
+  logger: ConfigLogger,
+  messageForKey: (key: string) => string,
+): void {
+  for (const key of Object.keys(source)) {
+    if (isSupportedKey(key, supportedKeys)) {
+      continue;
+    }
+
+    logger(messageForKey(key), "warn");
+  }
+}
+
 function cloneDurationConfig(config: DurationConfig): DurationConfig {
   return { ...config };
 }
@@ -229,13 +244,9 @@ function applyValidatedDurationConfig(
     applyValidatedDurationValue(nextDuration, rawDuration, key, fallback.duration, logger);
   }
 
-  for (const nestedKey of Object.keys(rawDuration)) {
-    if (isSupportedKey(nestedKey, DURATION_CONFIG_KEYS)) {
-      continue;
-    }
-
-    logger(`Invalid stream-watchdog.duration.${nestedKey} value; key is not supported. Ignoring.`, "warn");
-  }
+  warnUnsupportedKeys(rawDuration, DURATION_CONFIG_KEYS, logger, (nestedKey) => (
+    `Invalid stream-watchdog.duration.${nestedKey} value; key is not supported. Ignoring.`
+  ));
 
   config.duration = nextDuration;
 }
@@ -313,13 +324,9 @@ function mergePerAgentConfig(
 
     mergePerAgentDurationConfig(mergedAgentConfig, rawAgentConfig, pathPrefix, logger);
 
-    for (const nestedKey of Object.keys(rawAgentConfig)) {
-      if (isSupportedKey(nestedKey, PER_AGENT_CONFIG_KEYS)) {
-        continue;
-      }
-
-      logger(`Invalid ${pathPrefix}.${nestedKey} value; key is not supported for per-agent overrides. Ignoring.`, "warn");
-    }
+    warnUnsupportedKeys(rawAgentConfig, PER_AGENT_CONFIG_KEYS, logger, (nestedKey) => (
+      `Invalid ${pathPrefix}.${nestedKey} value; key is not supported for per-agent overrides. Ignoring.`
+    ));
 
     if (Object.keys(mergedAgentConfig).length > 0) {
       config.perAgent[agentName] = mergedAgentConfig;
@@ -352,13 +359,9 @@ function mergePerAgentDurationConfig(
     mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, key, `${pathPrefix}.duration`, logger);
   }
 
-  for (const nestedKey of Object.keys(rawDuration)) {
-    if (isSupportedKey(nestedKey, PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS)) {
-      continue;
-    }
-
-    logger(`Invalid ${pathPrefix}.duration.${nestedKey} value; key is not supported for per-agent duration overrides. Ignoring.`, "warn");
-  }
+  warnUnsupportedKeys(rawDuration, PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS, logger, (nestedKey) => (
+    `Invalid ${pathPrefix}.duration.${nestedKey} value; key is not supported for per-agent duration overrides. Ignoring.`
+  ));
 
   if (Object.keys(mergedDuration).length > 0) {
     target.duration = mergedDuration;

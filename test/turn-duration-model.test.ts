@@ -97,6 +97,42 @@ describe("turn duration model", () => {
     }
   });
 
+  test("warns and ignores unsupported global duration keys", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+    const globalConfigPath = join(tempDir, "global.json");
+    const projectConfigPath = join(tempDir, "project.json");
+    const logMessages: string[] = [];
+
+    try {
+      await writeFile(globalConfigPath, JSON.stringify({
+        "stream-watchdog": {
+          duration: {
+            minToastMs: 8_000,
+            unknownDurationKey: true,
+          },
+        },
+      }));
+      await writeFile(projectConfigPath, JSON.stringify({ "stream-watchdog": {} }));
+
+      const config = await loadWatchdogConfig({
+        globalConfigPath,
+        projectConfigPath,
+        logger: (message) => logMessages.push(message),
+      });
+
+      expect(config.duration).toEqual({
+        enabled: true,
+        minToastMs: 8_000,
+        slowToastMs: 30_000,
+      });
+      expect(logMessages).toContain(
+        "Invalid stream-watchdog.duration.unknownDurationKey value; key is not supported. Ignoring.",
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("falls back to defaults when whole duration block is invalid", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
     const globalConfigPath = join(tempDir, "global.json");
