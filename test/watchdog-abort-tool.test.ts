@@ -131,7 +131,7 @@ describe("watchdog_abort tool", () => {
     }]);
   });
 
-  test("aborts an explicit untracked session without claiming tracked metadata", async () => {
+  test("returns a tracked-session error for explicit untracked session IDs", async () => {
     const abortedSessions: string[] = [];
 
     const result = await executeWatchdogAbort({
@@ -142,12 +142,43 @@ describe("watchdog_abort tool", () => {
       },
     }, { sessionID: "missing-session" });
 
-    expect(abortedSessions).toEqual(["missing-session"]);
+    expect(abortedSessions).toEqual([]);
     expect(result).toEqual({
-      aborted: true,
+      aborted: false,
       sessionID: "missing-session",
       idleMs: 0,
+      reason: "session is not currently tracked",
     });
+  });
+
+  test("publishes reason metadata and skips abort for explicit untracked session IDs", async () => {
+    const metadataCalls: Array<{ title?: string; metadata?: Record<string, unknown> }> = [];
+    let abortCalls = 0;
+    const tool = createWatchdogAbortTool({
+      trackedSessions: new Map(),
+      abortSession: async () => {
+        abortCalls += 1;
+        return true;
+      },
+    });
+
+    const output = await tool.execute({ sessionID: "missing-session" }, toolContext(metadataCalls));
+
+    expect(abortCalls).toBe(0);
+    expect(output).toBe(JSON.stringify({
+      aborted: false,
+      sessionID: "missing-session",
+      idleMs: 0,
+      reason: "session is not currently tracked",
+    }));
+    expect(metadataCalls).toEqual([{
+      metadata: {
+        aborted: false,
+        sessionID: "missing-session",
+        idleMs: 0,
+        reason: "session is not currently tracked",
+      },
+    }]);
   });
 
   test("selects the longest-idle tracked session deterministically when omitted", async () => {

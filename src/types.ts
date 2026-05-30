@@ -62,4 +62,5 @@ export interface WatchdogAbortResult {
   sessionID: string;
   agent?: string;
   idleMs: number;
+  reason?: string;
 }
