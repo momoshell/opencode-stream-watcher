@@ -9,6 +9,29 @@ type GlobalScalarConfigKey = "warnThresholdMs" | "abortThresholdMs" | "tickMs" |
 type ThresholdConfigKey = "warnThresholdMs" | "abortThresholdMs";
 type DurationConfigKey = keyof DurationConfig;
 type DurationThresholdConfigKey = "minToastMs" | "slowToastMs";
+type PerAgentConfigKey = ThresholdConfigKey | "duration";
+
+const GLOBAL_SCALAR_CONFIG_KEYS: readonly GlobalScalarConfigKey[] = [
+  "warnThresholdMs",
+  "abortThresholdMs",
+  "tickMs",
+  "toast",
+  "log",
+];
+const DURATION_CONFIG_KEYS: readonly DurationConfigKey[] = ["enabled", "minToastMs", "slowToastMs"];
+const PER_AGENT_THRESHOLD_CONFIG_KEYS: readonly ThresholdConfigKey[] = [
+  "warnThresholdMs",
+  "abortThresholdMs",
+];
+const PER_AGENT_CONFIG_KEYS: readonly PerAgentConfigKey[] = [
+  "warnThresholdMs",
+  "abortThresholdMs",
+  "duration",
+];
+const PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS: readonly DurationThresholdConfigKey[] = [
+  "minToastMs",
+  "slowToastMs",
+];
 
 export type ConfigLogger = (message: string, level?: LogLevel) => void;
 
@@ -63,6 +86,10 @@ function parseNonNegativeNumber(value: unknown): number | null {
 
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function isSupportedKey<T extends string>(key: string, supportedKeys: readonly T[]): key is T {
+  return (supportedKeys as readonly string[]).includes(key);
 }
 
 function cloneDurationConfig(config: DurationConfig): DurationConfig {
@@ -168,11 +195,10 @@ function mergeConfig(
     perAgent: clonePerAgentConfig(current.perAgent),
   };
 
-  applyValidatedGlobalValue(next, source, "warnThresholdMs", fallback, logger);
-  applyValidatedGlobalValue(next, source, "abortThresholdMs", fallback, logger);
-  applyValidatedGlobalValue(next, source, "tickMs", fallback, logger);
-  applyValidatedGlobalValue(next, source, "toast", fallback, logger);
-  applyValidatedGlobalValue(next, source, "log", fallback, logger);
+  for (const key of GLOBAL_SCALAR_CONFIG_KEYS) {
+    applyValidatedGlobalValue(next, source, key, fallback, logger);
+  }
+
   applyValidatedDurationConfig(next, source, fallback, logger);
   mergePerAgentConfig(next, source, logger);
 
@@ -199,12 +225,12 @@ function applyValidatedDurationConfig(
 
   const nextDuration = cloneDurationConfig(config.duration);
 
-  applyValidatedDurationValue(nextDuration, rawDuration, "enabled", fallback.duration, logger);
-  applyValidatedDurationValue(nextDuration, rawDuration, "minToastMs", fallback.duration, logger);
-  applyValidatedDurationValue(nextDuration, rawDuration, "slowToastMs", fallback.duration, logger);
+  for (const key of DURATION_CONFIG_KEYS) {
+    applyValidatedDurationValue(nextDuration, rawDuration, key, fallback.duration, logger);
+  }
 
   for (const nestedKey of Object.keys(rawDuration)) {
-    if (nestedKey === "enabled" || nestedKey === "minToastMs" || nestedKey === "slowToastMs") {
+    if (isSupportedKey(nestedKey, DURATION_CONFIG_KEYS)) {
       continue;
     }
 
@@ -281,12 +307,14 @@ function mergePerAgentConfig(
       mergedAgentConfig.duration = { ...existingDuration };
     }
 
-    mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "warnThresholdMs", pathPrefix, logger);
-    mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, "abortThresholdMs", pathPrefix, logger);
+    for (const key of PER_AGENT_THRESHOLD_CONFIG_KEYS) {
+      mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, key, pathPrefix, logger);
+    }
+
     mergePerAgentDurationConfig(mergedAgentConfig, rawAgentConfig, pathPrefix, logger);
 
     for (const nestedKey of Object.keys(rawAgentConfig)) {
-      if (nestedKey === "warnThresholdMs" || nestedKey === "abortThresholdMs" || nestedKey === "duration") {
+      if (isSupportedKey(nestedKey, PER_AGENT_CONFIG_KEYS)) {
         continue;
       }
 
@@ -320,11 +348,12 @@ function mergePerAgentDurationConfig(
     ...(target.duration ?? {}),
   };
 
-  mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, "minToastMs", `${pathPrefix}.duration`, logger);
-  mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, "slowToastMs", `${pathPrefix}.duration`, logger);
+  for (const key of PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS) {
+    mergePerAgentDurationThresholdValue(mergedDuration, rawDuration, key, `${pathPrefix}.duration`, logger);
+  }
 
   for (const nestedKey of Object.keys(rawDuration)) {
-    if (nestedKey === "minToastMs" || nestedKey === "slowToastMs") {
+    if (isSupportedKey(nestedKey, PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS)) {
       continue;
     }
 
