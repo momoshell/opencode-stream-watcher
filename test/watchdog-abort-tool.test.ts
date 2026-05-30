@@ -11,6 +11,7 @@ describe("watchdog_abort tool", () => {
     ]);
     const abortedSessions: string[] = [];
     const logs: WatchdogAbortResult[] = [];
+    const reconciledSessions: string[] = [];
 
     const result = await executeWatchdogAbort({
       trackedSessions: sessions,
@@ -22,6 +23,9 @@ describe("watchdog_abort tool", () => {
       logAbort: async ({ result: entry }) => {
         logs.push(entry);
       },
+      onAbortSuccess: (sessionID) => {
+        reconciledSessions.push(sessionID);
+      },
     }, { sessionID: "session-1" });
 
     expect(abortedSessions).toEqual(["session-1"]);
@@ -32,6 +36,7 @@ describe("watchdog_abort tool", () => {
       idleMs: 5_000,
     });
     expect(logs).toEqual([result]);
+    expect(reconciledSessions).toEqual(["session-1"]);
   });
 
   test("returns JSON output and publishes metadata through the tool context", async () => {
@@ -188,6 +193,7 @@ describe("watchdog_abort tool", () => {
       ["tie-a", trackedSession({ sessionID: "tie-a", agent: "reviewer", lastActivity: 1_000 })],
     ]);
     const abortedSessions: string[] = [];
+    const reconciledSessions: string[] = [];
 
     const result = await executeWatchdogAbort({
       trackedSessions: sessions,
@@ -195,6 +201,9 @@ describe("watchdog_abort tool", () => {
       abortSession: async (sessionID) => {
         abortedSessions.push(sessionID);
         return true;
+      },
+      onAbortSuccess: (sessionID) => {
+        reconciledSessions.push(sessionID);
       },
     }, {});
 
@@ -205,6 +214,7 @@ describe("watchdog_abort tool", () => {
       agent: "reviewer",
       idleMs: 8_000,
     });
+    expect(reconciledSessions).toEqual(["tie-a"]);
   });
 
   test("does not abort when no session is provided and none are tracked", async () => {
@@ -231,6 +241,7 @@ describe("watchdog_abort tool", () => {
       ["session-1", trackedSession({ sessionID: "session-1", lastActivity: 1_000 })],
     ]);
     let logCount = 0;
+    const reconciledSessions: string[] = [];
 
     const result = await executeWatchdogAbort({
       trackedSessions: sessions,
@@ -238,6 +249,9 @@ describe("watchdog_abort tool", () => {
       abortSession: async () => false,
       logAbort: async () => {
         logCount += 1;
+      },
+      onAbortSuccess: (sessionID) => {
+        reconciledSessions.push(sessionID);
       },
     }, { sessionID: "session-1" });
 
@@ -247,6 +261,7 @@ describe("watchdog_abort tool", () => {
       idleMs: 1_000,
     });
     expect(logCount).toBe(0);
+    expect(reconciledSessions).toEqual([]);
   });
 });
 
@@ -279,3 +294,28 @@ function toolContext(metadataCalls: Array<{ title?: string; metadata?: Record<st
     ask: async () => undefined,
   } satisfies ToolContext;
 }
+test("reconciles before logging after successful abort", async () => {
+  const sessions = new Map<string, TrackedSession>([
+    ["session-1", trackedSession({ sessionID: "session-1", lastActivity: 1_000 })],
+  ]);
+  const steps: string[] = [];
+
+  const result = await executeWatchdogAbort({
+    trackedSessions: sessions,
+    now: () => 2_000,
+    abortSession: async () => true,
+    onAbortSuccess: () => {
+      steps.push("reconcile");
+    },
+    logAbort: async () => {
+      steps.push("log");
+    },
+  }, { sessionID: "session-1" });
+
+  expect(result).toEqual({
+    aborted: true,
+    sessionID: "session-1",
+    idleMs: 1_000,
+  });
+  expect(steps).toEqual(["reconcile", "log"]);
+});

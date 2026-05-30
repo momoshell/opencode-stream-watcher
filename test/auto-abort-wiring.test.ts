@@ -217,7 +217,7 @@ describe("auto-abort wiring", () => {
       await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
         "stream-watchdog": {
           warnThresholdMs: 90_000,
-          abortThresholdMs: 0,
+          abortThresholdMs: 1,
           tickMs: 10,
           log: true,
           toast: false,
@@ -242,10 +242,54 @@ describe("auto-abort wiring", () => {
         { sessionID: "session-1" },
         { metadata: () => undefined },
       );
+      await sleep(30);
 
       expect(client.abortedSessions).toEqual(["session-1"]);
+      expect(await statusTool.execute({ verbose: true })).toContain("stream-watchdog: no tracked sessions.");
       expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=1");
       expect(await statusTool.execute({ verbose: true })).toContain("byAgent agent=coder warns=0 resumes=0 aborts=1");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reconciles omitted-argument manual abort using the resolved longest-idle target", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+
+    try {
+      await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+        "stream-watchdog": {
+          warnThresholdMs: 90_000,
+          abortThresholdMs: 90_000,
+          tickMs: 10,
+          log: true,
+          toast: false,
+        },
+      }));
+
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+      const abortTool = plugin.tool?.watchdog_abort as AbortTool;
+
+      await plugin.event?.(busyEvent("session-1"));
+      await sleep(20);
+      await plugin.event?.(busyEvent("session-2"));
+
+      await abortTool.execute({}, { metadata: () => undefined });
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(client.abortedSessions).toEqual(["session-1"]);
+      expect(status).toContain("stream-watchdog: tracking 1 session.");
+      expect(status).toContain("sessionID=session-2");
+      expect(status).not.toContain("sessionID=session-1");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -286,6 +330,8 @@ describe("auto-abort wiring", () => {
       );
 
       expect(client.abortedSessions).toEqual(["session-1"]);
+      expect(await statusTool.execute({ verbose: true })).toContain("stream-watchdog: tracking 1 session.");
+      expect(await statusTool.execute({ verbose: true })).toContain("sessionID=session-1");
       expect(await statusTool.execute({ verbose: true })).toContain("totals warns=0 resumes=0 aborts=0");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
