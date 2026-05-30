@@ -129,6 +129,72 @@ describe("StreamWatchdog plugin e2e", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("removes a tracked session when session.error matches", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "errored-task" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      const initialStatus = await statusTool.execute({ verbose: true });
+      expect(initialStatus).toContain("stream-watchdog: no tracked sessions.");
+
+      await plugin.event?.(busyEvent("session-err-1"));
+      await waitForMetadata(client);
+
+      const trackedStatus = await statusTool.execute({ verbose: true });
+      expect(trackedStatus).toContain("stream-watchdog: tracking 1 session.");
+      expect(trackedStatus).toContain("sessionID=session-err-1");
+
+      await plugin.event?.(sessionErrorEvent("session-err-1"));
+
+      const clearedStatus = await statusTool.execute({ verbose: true });
+      expect(clearedStatus).toContain("stream-watchdog: no tracked sessions.");
+      expect(clearedStatus).not.toContain("sessionID=session-err-1");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores unknown session.error without changing empty status", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient();
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      const statusBefore = await statusTool.execute({ verbose: true });
+      expect(statusBefore).toContain("stream-watchdog: no tracked sessions.");
+
+      await plugin.event?.(sessionErrorEvent("missing-session"));
+
+      const statusAfter = await statusTool.execute({ verbose: true });
+      expect(statusAfter).toBe(statusBefore);
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeWatchdogConfig(tempDir: string): Promise<void> {
@@ -217,6 +283,17 @@ function partUpdatedEvent(sessionID: string, type = "text"): PluginEvent {
           sessionID,
           type,
         },
+      },
+    },
+  } as PluginEvent;
+}
+
+function sessionErrorEvent(sessionID: string): PluginEvent {
+  return {
+    event: {
+      type: "session.error",
+      properties: {
+        sessionID,
       },
     },
   } as PluginEvent;
