@@ -79,6 +79,15 @@ export async function executeWatchdogAbort(
   input: WatchdogAbortToolInput,
   args: WatchdogAbortArgs,
 ): Promise<WatchdogAbortResult> {
+  if (args.sessionID !== undefined && !input.trackedSessions.has(args.sessionID)) {
+    return {
+      aborted: false,
+      sessionID: args.sessionID,
+      idleMs: 0,
+      reason: "session is not currently tracked",
+    };
+  }
+
   const target = resolveAbortTarget(
     input.trackedSessions,
     args.sessionID,
@@ -253,6 +262,10 @@ function toAbortMetadata(result: WatchdogAbortResult): Record<string, boolean | 
 
   if (result.agent !== undefined) {
     metadata.agent = result.agent;
+  }
+
+  if (result.reason !== undefined) {
+    metadata.reason = result.reason;
   }
 
   return metadata;
