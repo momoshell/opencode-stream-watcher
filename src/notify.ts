@@ -1,4 +1,4 @@
-export type IncidentStage = "tracking-start" | "WARN" | "RESUME" | "ABORT";
+export type IncidentStage = "tracking-start" | "WARN" | "RESUME" | "ABORT" | "NOOP";
 
 export type IncidentLevel = "info" | "warn";
 
@@ -33,6 +33,13 @@ export type AbortToastBody = {
   message: string;
   variant: "error";
   duration: 8000;
+};
+
+export type NoopToastBody = {
+  title: "ℹ No-op turn detected";
+  message: string;
+  variant: "info";
+  duration: 4000;
 };
 
 export type TurnDurationLogEntry = {
@@ -157,6 +164,37 @@ export function buildAbortToastBody(args: {
     message: `${resolvedAgent} · ${sessionLabel} · aborted after ${toIdleSeconds(args.idleMs)}s`,
     variant: "error",
     duration: 8000,
+  };
+}
+
+export function buildNoopLogEntry(args: {
+  sessionID: string;
+  agent: string | null | undefined;
+  lastPartKind: string | null | undefined;
+}): IncidentLogEntry {
+  return buildIncidentLogEntry({
+    stage: "NOOP",
+    sessionID: args.sessionID,
+    agent: normalizeAgent(args.agent),
+    idleMs: 0,
+    lastPartKind: args.lastPartKind,
+  });
+}
+
+export function buildNoopToastBody(args: {
+  sessionID: string;
+  slug: string | null | undefined;
+  agent: string | null | undefined;
+  lastPartKind: string | null | undefined;
+}): NoopToastBody {
+  const resolvedAgent = normalizeAgent(args.agent);
+  const sessionLabel = normalizeSessionLabel(args.slug, args.sessionID);
+
+  return {
+    title: "ℹ No-op turn detected",
+    message: `Agent: ${resolvedAgent}\nSession: ${sessionLabel}\nLast part: ${normalizeLastPartKind(args.lastPartKind)}\nNo-op may be a legitimate blocker.\nInspect the session transcript or run watchdog_status for details.`,
+    variant: "info",
+    duration: 4000,
   };
 }
 
