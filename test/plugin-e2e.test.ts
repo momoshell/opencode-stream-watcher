@@ -240,6 +240,115 @@ describe("StreamWatchdog plugin e2e", () => {
     }
   });
 
+  test("records NOOP for a default watched agent on an idle turn without edits", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-noop-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "noop-task" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-noop-default"));
+      await waitForMetadata(client);
+      await plugin.event?.(sessionIdleEvent("session-noop-default"));
+
+      expect(findIncidentLog(client.logBodies, "NOOP")).toEqual({
+        service: "stream-watchdog",
+        level: "info",
+        message: "NOOP",
+        extra: {
+          sessionID: "session-noop-default",
+          agent: "coder",
+          idleSeconds: 0,
+          lastPartKind: "unknown",
+        },
+      });
+      expect(findToastByTitle(client.toastBodies, "ℹ No-op turn detected")).toEqual({
+        title: "ℹ No-op turn detected",
+        message: "Agent: coder\nSession: noop-task\nLast part: unknown\nNo-op may be a legitimate blocker.\nInspect the session transcript or run watchdog_status for details.",
+        variant: "info",
+        duration: 4000,
+      });
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("stream-watchdog: no tracked sessions.");
+      expect(status).toContain("type=NOOP sessionID=session-noop-default agent=coder");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("suppresses NOOP for unwatched and disabled agents", async () => {
+    const cases: readonly {
+      name: string;
+      agent: string;
+      config?: WatchdogConfigFixture;
+    }[] = [
+      {
+        name: "unwatched-agent",
+        agent: "code-reviewer",
+      },
+      {
+        name: "unwatched-explicit-enabled",
+        agent: "code-reviewer",
+        config: { perAgent: { "code-reviewer": { noopWatch: true } } },
+      },
+      {
+        name: "global-disabled",
+        agent: "coder",
+        config: { noop: { enabled: false } },
+      },
+      {
+        name: "per-agent-disabled",
+        agent: "coder",
+        config: { perAgent: { coder: { noopWatch: false } } },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const tempDir = await mkdtemp(join(tmpdir(), `stream-watchdog-e2e-noop-${testCase.name}-`));
+      const restoreDateNow = mockDateNow(1_000);
+
+      try {
+        await writeWatchdogConfig(tempDir, testCase.config);
+        const client = createPluginClient({
+          sessionMetadata: { agent: testCase.agent, slug: testCase.name },
+        });
+        const plugin = await StreamWatchdog({
+          client: client.client,
+          directory: tempDir,
+          project: tempDir,
+          worktree: tempDir,
+        } satisfies PluginInput);
+        const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+        await plugin.event?.(busyEvent(`session-${testCase.name}`));
+        await waitForMetadata(client);
+        await plugin.event?.(sessionIdleEvent(`session-${testCase.name}`));
+
+        expect(findIncidentLog(client.logBodies, "NOOP")).toBeUndefined();
+        expect(findToastByTitle(client.toastBodies, "ℹ No-op turn detected")).toBeUndefined();
+
+        const status = await statusTool.execute({ verbose: true });
+        expect(status).toContain("stream-watchdog: no tracked sessions.");
+        expect(status).not.toContain("type=NOOP");
+      } finally {
+        restoreDateNow();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("resolves config root fallback order via public plugin behavior", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-roots-"));
     const worktreeDir = join(rootDir, "worktree");
@@ -417,15 +526,19 @@ describe("StreamWatchdog plugin e2e", () => {
   });
 });
 
+type WatchdogConfigFixture = {
+  log?: boolean;
+  toast?: boolean;
+  warnThresholdMs?: number;
+  abortThresholdMs?: number;
+  tickMs?: number;
+  noop?: { enabled: boolean };
+  perAgent?: Record<string, { noopWatch?: boolean }>;
+};
+
 async function writeWatchdogConfig(
   tempDir: string,
-  options: {
-    log?: boolean;
-    toast?: boolean;
-    warnThresholdMs?: number;
-    abortThresholdMs?: number;
-    tickMs?: number;
-  } = {},
+  options: WatchdogConfigFixture = {},
 ): Promise<void> {
   const {
     log = true,
@@ -435,19 +548,29 @@ async function writeWatchdogConfig(
     tickMs = 5,
   } = options;
 
-  await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
-    "stream-watchdog": {
-      warnThresholdMs,
-      abortThresholdMs,
-      tickMs,
-      log,
-      toast,
-      duration: {
-        enabled: false,
-        minToastMs: 5_000,
-        slowToastMs: 30_000,
-      },
+  const streamWatchdogConfig: Record<string, unknown> = {
+    warnThresholdMs,
+    abortThresholdMs,
+    tickMs,
+    log,
+    toast,
+    duration: {
+      enabled: false,
+      minToastMs: 5_000,
+      slowToastMs: 30_000,
     },
+  };
+
+  if (options.noop !== undefined) {
+    streamWatchdogConfig.noop = options.noop;
+  }
+
+  if (options.perAgent !== undefined) {
+    streamWatchdogConfig.perAgent = options.perAgent;
+  }
+
+  await writeFile(join(tempDir, "opencode.json"), JSON.stringify({
+    "stream-watchdog": streamWatchdogConfig,
   }));
 }
 
@@ -541,6 +664,17 @@ function partUpdatedEvent(sessionID: string, type = "text"): PluginEvent {
   } as PluginEvent;
 }
 
+function sessionIdleEvent(sessionID: string): PluginEvent {
+  return {
+    event: {
+      type: "session.idle",
+      properties: {
+        sessionID,
+      },
+    },
+  } as PluginEvent;
+}
+
 function sessionErrorEvent(sessionID: string): PluginEvent {
   return {
     event: {
@@ -552,7 +686,7 @@ function sessionErrorEvent(sessionID: string): PluginEvent {
   } as PluginEvent;
 }
 
-function findIncidentLog(logBodies: readonly LogBody[], message: "WARN" | "RESUME" | "ABORT"): LogBody | undefined {
+function findIncidentLog(logBodies: readonly LogBody[], message: "WARN" | "RESUME" | "ABORT" | "NOOP"): LogBody | undefined {
   return logBodies.find((entry) => entry.message === message);
 }
 

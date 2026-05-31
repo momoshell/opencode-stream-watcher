@@ -100,6 +100,9 @@ All keys optional; defaults shown:
     "tickMs": 10000,
     "toast": true,
     "log": true,
+    "noop": {
+      "enabled": true
+    },
     "duration": {
       "enabled": true,
       "minToastMs": 5000,
@@ -116,10 +119,11 @@ All keys optional; defaults shown:
 | `tickMs` | `10000` | How often the watchdog checks tracked sessions |
 | `toast` | `true` | Show TUI toasts |
 | `log` | `true` | Write structured log entries via `client.app.log` |
+| `noop.enabled` | `true` | Watch known quiet no-op turns for the built-in code-mutating specialists: `coder`, `backend-specialist`, `frontend-specialist`, `devops-specialist`, `test-engineer`, `code-simplifier`, `svelte-file-editor` |
 | `duration.enabled` | `true` | Emit turn-duration logs and end-of-turn toasts |
 | `duration.minToastMs` | `5000` | Only show a turn-done toast when a turn takes at least this long |
 | `duration.slowToastMs` | `30000` | Upgrade the toast to slow-turn warning styling at or above this duration |
-| `perAgent` | `{}` | Override stall thresholds and nested duration toast thresholds by exact agent name |
+| `perAgent` | `{}` | Override stall thresholds, disable no-op watching for a default watched agent, and tune nested duration toast thresholds by exact agent name |
 
 ### Per-agent thresholds
 
@@ -133,16 +137,17 @@ All keys optional; defaults shown:
         "warnThresholdMs": 300000,
         "abortThresholdMs": 0
       },
-      "doc-writer": {
+      "coder": {
         "warnThresholdMs": 60000,
-        "abortThresholdMs": 120000
+        "abortThresholdMs": 120000,
+        "noopWatch": false
       }
     }
   }
 }
 ```
 
-Use `perAgent` when one agent class naturally runs quieter, should auto-abort sooner, should opt out with `0`, or needs different duration toast thresholds.
+Use `perAgent` when one agent class naturally runs quieter, should auto-abort sooner, should opt out with `0`, needs different duration toast thresholds, or should disable no-op watching for one default watched agent with `noopWatch: false`. By default, no-op watching is enabled for `coder`, `backend-specialist`, `frontend-specialist`, `devops-specialist`, `test-engineer`, `code-simplifier`, and `svelte-file-editor` only; agents outside that set are never no-op flagged.
 
 ### Turn-duration reporting
 

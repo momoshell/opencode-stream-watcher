@@ -9,6 +9,15 @@ import type {
 } from "./types.js";
 
 const RESUME_REARM_MS = 30_000;
+const DEFAULT_NOOP_WATCHED_AGENTS = new Set<string>([
+  "coder",
+  "backend-specialist",
+  "frontend-specialist",
+  "devops-specialist",
+  "test-engineer",
+  "code-simplifier",
+  "svelte-file-editor",
+]);
 
 export interface SessionMetadata {
   agent?: string;
@@ -63,6 +72,31 @@ export function resolveDurationConfig(
     minToastMs: override?.minToastMs ?? config.duration.minToastMs,
     slowToastMs: override?.slowToastMs ?? config.duration.slowToastMs,
   };
+}
+
+export function resolveNoopWatch(
+  tracked: TrackedSession,
+  config: Pick<WatchdogConfig, "noop" | "perAgent">,
+): boolean {
+  if (!config.noop.enabled) {
+    return false;
+  }
+
+  if (tracked.state === "aborted" || tracked.mutated || tracked.endedWithBlocker) {
+    return false;
+  }
+
+  const agent = tracked.agent;
+  if (agent === undefined) {
+    return false;
+  }
+
+  if (!DEFAULT_NOOP_WATCHED_AGENTS.has(agent)) {
+    return false;
+  }
+
+  const override = config.perAgent[agent]?.noopWatch;
+  return override !== false;
 }
 
 export function recordPartActivity(

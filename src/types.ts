@@ -5,7 +5,12 @@ export type LastPartKind = "text" | "reasoning" | "tool";
 export interface PerAgentThresholdConfig {
   warnThresholdMs?: number;
   abortThresholdMs?: number;
+  noopWatch?: boolean;
   duration?: PerAgentDurationConfig;
+}
+
+export interface NoopConfig {
+  enabled: boolean;
 }
 
 export interface DurationConfig {
@@ -22,6 +27,7 @@ export interface WatchdogConfig {
   tickMs: number;
   toast: boolean;
   log: boolean;
+  noop: NoopConfig;
   duration: DurationConfig;
   perAgent: Record<string, PerAgentThresholdConfig>;
 }
