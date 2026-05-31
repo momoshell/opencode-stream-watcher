@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.1.0
+
 - Reposition the docs around the broader "silent subagent failures" story while keeping existing runtime behavior and config names unchanged.
 - Add no-op counters to watchdog stats snapshots/status output (`recordNoop`, totals, and per-agent lines).
 - Add configurable no-op watch defaults docs, including `noop.enabled`, per-agent `noopWatch`, and the default watched specialist set.
