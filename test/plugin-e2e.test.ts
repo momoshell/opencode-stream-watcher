@@ -68,7 +68,7 @@ describe("StreamWatchdog plugin e2e", () => {
       );
 
       clock.now = 32_250;
-      await plugin.event?.(partUpdatedEvent("session-1", "text"));
+      await plugin.event?.(partUpdatedEvent("session-1", { type: "text" }));
       await waitUntil(() => findToastByTitle(client.toastBodies, "▶ Stream recovered") !== undefined);
 
       clock.now = 62_351;
@@ -240,7 +240,7 @@ describe("StreamWatchdog plugin e2e", () => {
     }
   });
 
-  test("records NOOP for a default watched agent on an idle turn without edits", async () => {
+  test("records exactly one NOOP after non-edit parts on an idle turn", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-noop-"));
     const restoreDateNow = mockDateNow(1_000);
 
@@ -259,7 +259,17 @@ describe("StreamWatchdog plugin e2e", () => {
 
       await plugin.event?.(busyEvent("session-noop-default"));
       await waitForMetadata(client);
+      await plugin.event?.(partUpdatedEvent("session-noop-default", {
+        type: "reasoning",
+      }));
+      await plugin.event?.(partUpdatedEvent("session-noop-default", {
+        type: "tool",
+        tool: "shell",
+        state: { status: "completed" },
+      }));
       await plugin.event?.(sessionIdleEvent("session-noop-default"));
+
+      expect(client.logBodies.filter((entry) => entry.message === "NOOP")).toHaveLength(1);
 
       expect(findIncidentLog(client.logBodies, "NOOP")).toEqual({
         service: "stream-watchdog",
@@ -269,12 +279,12 @@ describe("StreamWatchdog plugin e2e", () => {
           sessionID: "session-noop-default",
           agent: "coder",
           idleSeconds: 0,
-          lastPartKind: "unknown",
+          lastPartKind: "tool",
         },
       });
       expect(findToastByTitle(client.toastBodies, "ℹ No-op turn detected")).toEqual({
         title: "ℹ No-op turn detected",
-        message: "Agent: coder\nSession: noop-task\nLast part: unknown\nNo-op may be a legitimate blocker.\nInspect the session transcript or run watchdog_status for details.",
+        message: "Agent: coder\nSession: noop-task\nLast part: tool\nNo-op may be a legitimate blocker.\nInspect the session transcript or run watchdog_status for details.",
         variant: "info",
         duration: 4000,
       });
@@ -357,6 +367,46 @@ describe("StreamWatchdog plugin e2e", () => {
       expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=1");
       expect(status).toContain("byAgent agent=coder warns=0 resumes=0 aborts=0 noops=1");
       expect(status).toContain("type=NOOP sessionID=session-noop-duplicate agent=coder");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("suppresses NOOP and clears tracking when turn includes a completed edit tool part", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-noop-mutated-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "noop-mutated" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-noop-mutated"));
+      await waitForMetadata(client);
+      await plugin.event?.(partUpdatedEvent("session-noop-mutated", {
+        type: "tool",
+        tool: "apply_patch",
+        state: { status: "completed" },
+      }));
+      await plugin.event?.(sessionIdleEvent("session-noop-mutated"));
+
+      expect(findIncidentLog(client.logBodies, "NOOP")).toBeUndefined();
+      expect(findToastByTitle(client.toastBodies, "ℹ No-op turn detected")).toBeUndefined();
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("stream-watchdog: no tracked sessions.");
+      expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=0");
+      expect(status).toContain("byAgent agent=coder warns=0 resumes=0 aborts=0 noops=0");
+      expect(status).not.toContain("type=NOOP");
     } finally {
       restoreDateNow();
       await rm(tempDir, { recursive: true, force: true });
@@ -588,7 +638,7 @@ describe("StreamWatchdog plugin e2e", () => {
           },
         },
       } as PluginEvent);
-      await plugin.event?.(partUpdatedEvent("untracked-session", "text"));
+      await plugin.event?.(partUpdatedEvent("untracked-session", { type: "text" }));
 
       const statusAfterUnknowns = await statusTool.execute({ verbose: true });
       expect(statusAfterUnknowns).toBe(emptyStatus);
@@ -732,14 +782,25 @@ function busyEvent(sessionID: string): PluginEvent {
   } as PluginEvent;
 }
 
-function partUpdatedEvent(sessionID: string, type = "text"): PluginEvent {
+function partUpdatedEvent(
+  sessionID: string,
+  part: {
+    type?: string;
+    tool?: string;
+    state?: { status?: string };
+    text?: string;
+  } = {},
+): PluginEvent {
   return {
     event: {
       type: "message.part.updated",
       properties: {
         part: {
           sessionID,
-          type,
+          type: part.type ?? "text",
+          ...(part.tool ? { tool: part.tool } : {}),
+          ...(part.state ? { state: part.state } : {}),
+          ...(part.text ? { text: part.text } : {}),
         },
       },
     },
