@@ -222,6 +222,8 @@ async function handleSessionIdle(
     return;
   }
 
+  stopTracking(trackedSessions, sessionID);
+
   const now = Date.now();
   const durationMs = Math.max(0, now - tracked.callStart);
   tracked.lastTurnMs = durationMs;
@@ -249,6 +251,10 @@ async function handleSessionIdle(
 
   const noopDetected = recordNoopIfNeeded(recentEvents, tracked, config, now);
 
+  if (noopDetected) {
+    stats.recordNoop(tracked.agent);
+  }
+
   if (noopDetected && config.log) {
     await safeLog(client, buildNoopLogEntry({
       sessionID: tracked.sessionID,
@@ -265,8 +271,6 @@ async function handleSessionIdle(
       lastPartKind: tracked.lastPartKind,
     }));
   }
-
-  stopTracking(trackedSessions, sessionID);
 }
 
 function recordNoopIfNeeded(
