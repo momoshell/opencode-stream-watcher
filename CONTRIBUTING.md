@@ -29,7 +29,7 @@ ln -sf "$(pwd)/dist/plugin.js" ~/.config/opencode/plugins/stream-watchdog.js
 
 Restart opencode. The plugin loads on startup. Edit, rebuild, restart opencode to pick up changes.
 
-To reproduce a stall, follow [`scripts/stall-fixture.md`](scripts/stall-fixture.md) *(coming in v0.1)*.
+To reproduce a stall, follow [`scripts/stall-fixture.md`](scripts/stall-fixture.md). For the full manual test flow, also read [`docs/TESTING.md`](docs/TESTING.md).
 
 ## Workflow
 
@@ -66,16 +66,14 @@ Maintainer-only.
 Prerequisites:
 
 - The release commit is already on `main`.
-- The repo-level `NPM_TOKEN` secret is configured for the GitHub Actions publish step.
-- Maintainer approval is given before pushing the first release tag (`v0.1.0`).
+- The release workflow uses npm Trusted Publishing via GitHub Actions OIDC.
+- The package version in `package.json` matches the release tag you plan to push.
 
 Release flow:
 
 1. Confirm the release commit and docs are merged to `main`.
-2. Create and push a tag in `vX.Y.Z` format from `main` (for this release: `v0.1.0`).
-3. GitHub Actions runs `release.yml` and publishes to npm.
-
-Do not claim the npm token can be verified locally; publication depends on the repo secret in GitHub.
+2. Create and push a tag in `vX.Y.Z` format from `main`.
+3. GitHub Actions runs `release.yml`, verifies the tag matches `package.json`, and publishes to npm via OIDC.
 
 ## Reporting issues
 

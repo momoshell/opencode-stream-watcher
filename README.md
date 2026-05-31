@@ -4,18 +4,47 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## In one minute
+## Quick start
 
 `opencode-stream-watcher` catches a narrow but painful class of silent subagent failures: a subagent is still "running," but either the LLM stream has gone silent or a known quiet no-op turn finished without visible progress.
 
-It surfaces that with:
+### 1. Register the published plugin
 
-- a sticky **WARN** toast in the TUI for silent stall windows
-- a **RESUME** toast if stalled output comes back
-- no-op watching for built-in quiet specialist turns
-- structured log entries you can grep later
+Add this to your `opencode.json`:
 
-Default behavior is: **warn at 90s, auto-abort at 10 minutes**.
+```json
+{
+  "plugin": ["opencode-stream-watcher"]
+}
+```
+
+Restart opencode. That's it.
+
+By default the plugin will:
+
+- show a sticky **WARN** toast after **90s** of stream silence
+- show a **RESUME** toast if output starts moving again
+- **auto-abort** a stalled session after **10 minutes**
+- flag quiet no-op turns for the built-in watched specialist set
+- write structured watchdog events into opencode's existing log files
+
+### 2. Know what you'll see
+
+| Signal | When it appears | What to do |
+|---|---|---|
+| **WARN** toast | A running subagent goes silent past `warnThresholdMs` | Press **Esc** to interrupt, or ask your foreground agent to call `watchdog_abort` |
+| **RESUME** toast | A warned stalled stream starts producing output again | Usually no action needed |
+| **ABORT** event | Silence crosses `abortThresholdMs` and auto-abort is enabled | Re-run or inspect the stuck task |
+| **No-op event** | A watched quiet specialist finishes without visible work surfaced | Check whether the turn actually did what you expected |
+
+### 3. Check logs or tools when needed
+
+- Logs live under `~/.local/share/opencode/log/`
+- Foreground-agent tools:
+  - `watchdog_status`
+  - `watchdog_abort`
+
+For local plugin development and symlink-based testing, skip to [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/TESTING.md`](docs/TESTING.md).
 
 ## The problem
 
@@ -63,8 +92,8 @@ What a warning looks like in the TUI:
 │ Silent for 95s (last: reasoning).    │
 │                                      │
 │ Esc to interrupt · ask your          │
-│ foreground agent to kill it for      │
-│ selective abort.                     │
+│ foreground agent to call             │
+│ watchdog_abort.                      │
 └──────────────────────────────────────┘
 ```
 
@@ -72,7 +101,7 @@ What a warning looks like in the TUI:
 
 **Requires:** opencode v1.2 or later (uses the plugin API).
 
-Add this to your `opencode.json`:
+For normal use, register the published package in `opencode.json`:
 
 ```json
 {
@@ -80,21 +109,15 @@ Add this to your `opencode.json`:
 }
 ```
 
-```text
-1. Add the plugin entry.
-2. Restart opencode.
-3. If a subagent stalls, react from the toast.
-```
+Then restart opencode.
 
 That's it — by default you get a WARN at 90s and an auto-abort at 10 minutes.
 
+For local development with a built `dist/plugin.js` symlink, use the workflow in [`CONTRIBUTING.md`](CONTRIBUTING.md) instead of the package registration above.
+
 ### Verify it loaded
 
-On startup the plugin writes a load line to opencode's log. Confirm with:
-
-```bash
-grep stream-watchdog ~/.local/share/opencode/log/$(ls -t ~/.local/share/opencode/log/ | head -1)
-```
+On startup the plugin writes a load line to opencode's log. Open the latest log file under `~/.local/share/opencode/log/` and look for `service=stream-watchdog` with `loaded`.
 
 You should see an entry like `service=stream-watchdog level=info ... loaded`.
 
@@ -255,6 +278,16 @@ When a stream-stall WARN toast appears:
 | Wait it out | Sticky toast stays until activity resumes (RESUME toast confirms) or auto-abort fires |
 | Restart the whole session | If the subagent stays wedged or repeated stalls suggest a bad state, restart opencode and retry |
 | Adjust thresholds | Change the global or `perAgent` config above, then restart opencode |
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| No toast, no log events | Confirm the plugin is registered in `opencode.json`, restart opencode, then check the latest file under `~/.local/share/opencode/log/` for `service=stream-watchdog ... loaded` |
+| WARN fired too early or too late | Check `warnThresholdMs`, `tickMs`, and any `perAgent` override for that exact agent name |
+| A stall warned but did not auto-abort | Confirm `abortThresholdMs` is not `0` and that any per-agent override did not disable abort for that agent |
+| You want selective abort | Use `watchdog_abort` instead of killing the entire opencode session |
+| You need a repro recipe | Use [`docs/TESTING.md`](docs/TESTING.md) and [`scripts/stall-fixture.md`](scripts/stall-fixture.md) |
 
 ## How it works
 

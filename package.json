@@ -1,7 +1,7 @@
 {
   "name": "opencode-stream-watcher",
   "version": "1.0.0",
-  "description": "Detect and recover from silent LLM stream stalls in opencode subagents.",
+  "description": "Surface silent opencode subagent failures, including stream stalls and quiet no-op turns.",
   "type": "module",
   "main": "./dist/plugin.js",
   "exports": {
@@ -28,7 +28,11 @@
     "watchdog",
     "stream",
     "stall",
-    "timeout"
+    "timeout",
+    "noop",
+    "subagent",
+    "toast",
+    "monitoring"
   ],
   "author": "momoshell",
   "license": "MIT",
