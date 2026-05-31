@@ -4,7 +4,7 @@ Guidance for AI-assisted contributors (Claude Code, opencode subagents, Aider, e
 
 ## Project goal
 
-One sentence: detect silent LLM stream stalls in opencode subagents, surface them through TUI toasts and structured logs, and optionally auto-abort.
+One sentence: detect silent subagent failures in opencode — especially silent stream stalls and quiet no-op turns — then surface them through TUI toasts and structured logs, with optional auto-abort for the stall path.
 
 We're solving a single, narrow problem. Don't expand scope. Don't add a second feature "while you're in there."
 
@@ -45,7 +45,7 @@ These are deliberate non-features. Don't propose them unless an issue exists:
 
 - ❌ macOS system notifications (`osascript`) — toasts are sufficient and contextual to opencode.
 - ❌ Terminal bell (`\a`) — low signal, annoying, unclear if opencode passes it through.
-- ❌ Expanding beyond the narrow stream-stall problem — keep the plugin focused on detection, surfacing, and optional abort.
+- ❌ Expanding beyond the narrow silent-subagent-failure problem — keep the plugin focused on detection, surfacing, no-op visibility, and optional abort for stream stalls.
 - ❌ Custom log files — `client.app.log` writes to opencode's existing log infrastructure.
 - ❌ HTTP/WebSocket/external integrations — local plugin only.
 - ❌ Persistent state across opencode restarts — in-memory only, ephemeral by design.

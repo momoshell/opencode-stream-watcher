@@ -2,7 +2,13 @@
 
 The design rationale for `opencode-stream-watcher`. If you want the *why* and the architectural decisions, this is the document. The README is for users; this is for contributors.
 
-## Root cause
+The product story is now broader than stream stalls alone: the plugin is about **silent subagent failures**. In runtime terms today, that umbrella covers two concrete cases already documented elsewhere in the repo: silent stream stalls and quiet no-op turns for a small built-in specialist set. This document keeps the architecture distinction explicit so the broader story does not imply a new runtime mechanism.
+
+That wording matters: both cases belong under **runtime verification**, not prompt design. A prompt can tell a specialist what good behavior looks like, but it cannot detect an open-but-silent stream or independently verify that a finished quiet specialist turn produced meaningful surfaced work. Those are runtime observations.
+
+Just as importantly, they are **not the same runtime path**. Stream stalls use the tracked-session heartbeat and tick-loop state machine described below. Quiet no-op turns stay a separate, narrower verification path layered on top of completed turns and watched-agent rules. Keeping them separate avoids implying that no-op behavior is part of the stall state machine.
+
+## Root cause: silent stream stalls
 
 opencode delegates work to subagents via its `task` tool. Each subagent runs an LLM streaming call (`service=llm ... stream`). The streaming response is delivered as Server-Sent Events.
 
@@ -24,9 +30,9 @@ Observed in real sessions:
 
 In both, between the stream start and the cancel: no tool calls, no errors, no further LLM events. Just silence.
 
-This is **not** a prompt-design failure (no narration loop, no @agent conflict, no context exhaustion). The agent prompts in the user's setup are well-disciplined: every leaf has `task: false`, an execution contract, no-op verification on the parent. Prompt hardening has nothing left to offer.
+This is **not** a prompt-design failure (no narration loop, no @agent conflict, no context exhaustion). The agent prompts in the user's setup are well-disciplined: every leaf has `task: false`, an execution contract, and no-op verification on the parent. Prompt hardening has nothing left to offer for the stall case.
 
-It's a runtime/transport problem. The fix has to live at the runtime layer.
+It's a runtime/transport problem. The fix for the stall mode has to live at the runtime layer.
 
 ## Plugin API surface
 
@@ -65,9 +71,9 @@ export const StreamWatchdog: Plugin = async (ctx) => {
 | `client.session.get({ path: { id: sessionID } })` | Re-read session metadata before surfacing status or aborting so tooling works from current SDK state |
 | `client.session.abort({ path: { id: sessionID } })` | Programmatic session cancel for default auto-abort and selective abort tooling |
 
-Current releases use the heartbeat events plus best-effort toasts, structured logs, and `client.session.abort()` when silence crosses the configured abort threshold.
+Current releases use the heartbeat events plus best-effort toasts, structured logs, and `client.session.abort()` when silence crosses the configured abort threshold. Separately, current releases also document/runtime-track quiet no-op turns through config and stats surfaces; that is adjacent product scope, not a change to the stream-stall state machine below.
 
-## Architecture
+## Architecture: stall detection path
 
 ```
 ┌──────────────────┐     ┌──────────────────────┐
@@ -173,7 +179,7 @@ opencode's keybinding system treats `esc` as the interrupt key (`escape:"esc"` i
 | Wait it out | When unsure | Sticky WARN persists until activity resumes (RESUME confirms) or the default 10-minute auto-abort fires, unless you set `abortThresholdMs: 0`. |
 | Restart opencode | Esc didn't propagate | Nuclear, rare. Documented in README, not engineered around. |
 
-In short: the plugin detects, logs, warns, and by default auto-aborts long silent stalls; users can still opt out with `abortThresholdMs: 0`.
+In short: for the stall path, the plugin detects, logs, warns, and by default auto-aborts long silent stalls; users can still opt out with `abortThresholdMs: 0`.
 
 ## Distribution
 
