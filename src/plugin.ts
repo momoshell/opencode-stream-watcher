@@ -15,6 +15,8 @@ import {
 import {
   buildAbortToastBody,
   buildIncidentLogEntry,
+  buildNoopLogEntry,
+  buildNoopToastBody,
   buildResumeToastBody,
   buildTurnDurationLogEntry,
   buildTurnDurationToastBody,
@@ -253,7 +255,25 @@ async function handleSessionIdle(
     }
   }
 
-  recordNoopIfNeeded(recentEvents, tracked, now);
+  const noopDetected = recordNoopIfNeeded(recentEvents, tracked, now);
+
+  if (noopDetected && config.log) {
+    await safeLog(client, buildNoopLogEntry({
+      sessionID: tracked.sessionID,
+      agent: tracked.agent,
+      lastPartKind: tracked.lastPartKind,
+    }));
+  }
+
+  if (noopDetected && config.toast) {
+    await safeToast(client, buildNoopToastBody({
+      sessionID: tracked.sessionID,
+      slug: tracked.slug,
+      agent: tracked.agent,
+      lastPartKind: tracked.lastPartKind,
+    }));
+  }
+
   stopTracking(trackedSessions, sessionID);
 }
 
@@ -261,9 +281,9 @@ function recordNoopIfNeeded(
   recentEvents: RecentWatchdogEvent[],
   tracked: TrackedSession,
   now: number,
-): void {
+): boolean {
   if (!shouldRecordNoop(tracked)) {
-    return;
+    return false;
   }
 
   recordRecentWatchdogEvent(recentEvents, {
@@ -272,6 +292,8 @@ function recordNoopIfNeeded(
     sessionID: tracked.sessionID,
     agent: tracked.agent ?? "unknown",
   });
+
+  return true;
 }
 
 function shouldRecordNoop(tracked: TrackedSession): boolean {
