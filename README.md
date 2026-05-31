@@ -1,24 +1,25 @@
 # opencode-stream-watcher
 
-> Detect and recover from silent LLM stream stalls in opencode subagents.
+> Detect silent subagent failures in opencode, especially stream stalls and quiet no-op turns.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## In one minute
 
-`opencode-stream-watcher` catches a narrow but painful failure mode: a subagent is still "running," but the LLM stream has gone silent.
+`opencode-stream-watcher` catches a narrow but painful class of silent subagent failures: a subagent is still "running," but either the LLM stream has gone silent or a known quiet no-op turn finished without visible progress.
 
-It solves that with:
+It surfaces that with:
 
-- a sticky **WARN** toast in the TUI
-- a **RESUME** toast if the stream comes back
+- a sticky **WARN** toast in the TUI for silent stall windows
+- a **RESUME** toast if stalled output comes back
+- no-op watching for built-in quiet specialist turns
 - structured log entries you can grep later
 
 Default behavior is: **warn at 90s, auto-abort at 10 minutes**.
 
 ## The problem
 
-You delegate work to an opencode subagent. The TUI shows it's running. Minutes pass. No output. Nothing in the log. The agent isn't crashed — the LLM stream just *stopped emitting tokens*, and opencode has no built-in idle-stream timeout.
+You delegate work to an opencode subagent. The TUI shows it's running. Minutes pass. No output, or a quiet specialist turn ends with no meaningful work surfaced. The agent isn't necessarily crashed — sometimes the LLM stream just *stopped emitting tokens*, and sometimes the turn was a silent no-op.
 
 The fingerprint in `~/.local/share/opencode/log/`:
 
@@ -29,18 +30,28 @@ INFO 10:36:36 service=session.prompt cancel
 ERROR 10:36:36 error=Aborted process
 ```
 
-You only know it's stuck because *you* noticed, hit Esc, and reconstructed the timeline after the fact.
+You only know something went wrong because *you* noticed, hit Esc, and reconstructed the timeline after the fact.
+
+### Two silent failure modes, not one
+
+| Mode | What you see | What the plugin verifies at runtime |
+|---|---|---|
+| **Stream stall** | A subagent still looks busy, but the stream stops producing parts | Session activity goes idle past the WARN/ABORT thresholds |
+| **Quiet no-op turn** | A built-in watched specialist finishes without visible work surfaced | The finished turn matches the plugin's narrow no-op checks for the default watched agent set |
+
+Both are user-visible silent failures. They are different runtime checks, which is why stall thresholds and no-op watching stay documented separately.
 
 ## What this plugin does
 
-Subscribes to the opencode message bus, timestamps every streaming chunk per session, and:
+Subscribes to the opencode message bus, timestamps every streaming chunk per session, and layers in focused runtime checks for silent failures:
 
 - **Warns you** with a sticky TUI toast when a session goes quiet past a threshold (default 90s).
 - **Lets you know** when it recovers, via a transient success toast.
 - **Auto-aborts** the stalled session after 10 minutes by default.
+- **Flags quiet no-op turns** for the built-in watched specialist set.
 - **Logs everything** through opencode's structured log so you can grep incident history.
 
-No system notifications, no terminal bells, no busy-work. Just focused TUI feedback, structured logs, and a default safety stop for long silent stalls.
+No system notifications, no terminal bells, no busy-work. Just focused TUI feedback, structured logs, no-op visibility for known quiet specialists, and a default safety stop for long silent stream stalls.
 
 What a warning looks like in the TUI:
 
@@ -114,7 +125,7 @@ All keys optional; defaults shown:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `warnThresholdMs` | `90000` | Idle milliseconds before a WARN toast fires |
+| `warnThresholdMs` | `90000` | Idle milliseconds before a stream-stall WARN toast fires |
 | `abortThresholdMs` | `600000` | Idle ms before auto-abort. Set `0` to opt out explicitly. |
 | `tickMs` | `10000` | How often the watchdog checks tracked sessions |
 | `toast` | `true` | Show TUI toasts |
@@ -235,7 +246,7 @@ Example `watchdog_abort` result:
 
 ## Reaction paths
 
-When a WARN toast appears:
+When a stream-stall WARN toast appears:
 
 | You want to… | Do this |
 |---|---|
