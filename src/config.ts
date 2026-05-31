@@ -2,14 +2,15 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { DurationConfig, PerAgentThresholdConfig, WatchdogConfig } from "./types.js";
+import type { DurationConfig, NoopConfig, PerAgentThresholdConfig, WatchdogConfig } from "./types.js";
 
 type LogLevel = "warn" | "error";
 type GlobalScalarConfigKey = "warnThresholdMs" | "abortThresholdMs" | "tickMs" | "toast" | "log";
 type ThresholdConfigKey = "warnThresholdMs" | "abortThresholdMs";
+type NoopConfigKey = keyof NoopConfig;
 type DurationConfigKey = keyof DurationConfig;
 type DurationThresholdConfigKey = "minToastMs" | "slowToastMs";
-type PerAgentConfigKey = ThresholdConfigKey | "duration";
+type PerAgentConfigKey = ThresholdConfigKey | "noopWatch" | "duration";
 
 const GLOBAL_SCALAR_CONFIG_KEYS: readonly GlobalScalarConfigKey[] = [
   "warnThresholdMs",
@@ -19,6 +20,7 @@ const GLOBAL_SCALAR_CONFIG_KEYS: readonly GlobalScalarConfigKey[] = [
   "log",
 ];
 const DURATION_CONFIG_KEYS: readonly DurationConfigKey[] = ["enabled", "minToastMs", "slowToastMs"];
+const NOOP_CONFIG_KEYS: readonly NoopConfigKey[] = ["enabled"];
 const PER_AGENT_THRESHOLD_CONFIG_KEYS: readonly ThresholdConfigKey[] = [
   "warnThresholdMs",
   "abortThresholdMs",
@@ -26,6 +28,7 @@ const PER_AGENT_THRESHOLD_CONFIG_KEYS: readonly ThresholdConfigKey[] = [
 const PER_AGENT_CONFIG_KEYS: readonly PerAgentConfigKey[] = [
   "warnThresholdMs",
   "abortThresholdMs",
+  "noopWatch",
   "duration",
 ];
 const PER_AGENT_DURATION_THRESHOLD_CONFIG_KEYS: readonly DurationThresholdConfigKey[] = [
@@ -52,6 +55,9 @@ const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   tickMs: 10_000,
   toast: true,
   log: true,
+  noop: {
+    enabled: true,
+  },
   duration: {
     enabled: true,
     minToastMs: 5_000,
@@ -108,6 +114,10 @@ function warnUnsupportedKeys<T extends string>(
 }
 
 function cloneDurationConfig(config: DurationConfig): DurationConfig {
+  return { ...config };
+}
+
+function cloneNoopConfig(config: NoopConfig): NoopConfig {
   return { ...config };
 }
 
@@ -215,6 +225,7 @@ function mergeConfig(
 ): WatchdogConfig {
   const next: WatchdogConfig = {
     ...current,
+    noop: cloneNoopConfig(current.noop),
     duration: cloneDurationConfig(current.duration),
     perAgent: clonePerAgentConfig(current.perAgent),
   };
@@ -223,10 +234,49 @@ function mergeConfig(
     applyValidatedGlobalValue(next, source, key, fallback, logger);
   }
 
+  applyValidatedNoopConfig(next, source, fallback, logger);
   applyValidatedDurationConfig(next, source, fallback, logger);
   mergePerAgentConfig(next, source, logger);
 
   return next;
+}
+
+function applyValidatedNoopConfig(
+  config: WatchdogConfig,
+  source: Record<string, unknown>,
+  fallback: WatchdogConfig,
+  logger: ConfigLogger,
+): void {
+  const rawNoop = source["noop"];
+
+  if (rawNoop === undefined) {
+    return;
+  }
+
+  if (!isRecord(rawNoop)) {
+    logger("Invalid stream-watchdog.noop value; expected object. Using fallback.", "warn");
+    config.noop = cloneNoopConfig(fallback.noop);
+    return;
+  }
+
+  const nextNoop = cloneNoopConfig(config.noop);
+
+  const enabled = rawNoop.enabled;
+  if (enabled !== undefined) {
+    const parsed = parseBoolean(enabled);
+    if (parsed === null) {
+      logger("Invalid stream-watchdog.noop.enabled value; expected boolean. Using fallback.", "warn");
+      nextNoop.enabled = fallback.noop.enabled;
+    } else {
+      nextNoop.enabled = parsed;
+    }
+  }
+
+  warnUnsupportedKeys(rawNoop, NOOP_CONFIG_KEYS, logger, (nestedKey) => (
+    `Invalid stream-watchdog.noop.${nestedKey} value; key is not supported. Ignoring.`
+  ));
+
+  config.noop = nextNoop;
 }
 
 function applyValidatedDurationConfig(
@@ -325,6 +375,8 @@ function mergePerAgentConfig(
       mergePerAgentThresholdValue(mergedAgentConfig, rawAgentConfig, key, pathPrefix, logger);
     }
 
+    mergePerAgentNoopWatchValue(mergedAgentConfig, rawAgentConfig, pathPrefix, logger);
+
     mergePerAgentDurationConfig(mergedAgentConfig, rawAgentConfig, pathPrefix, logger);
 
     warnUnsupportedKeys(rawAgentConfig, PER_AGENT_CONFIG_KEYS, logger, (nestedKey) => (
@@ -335,6 +387,27 @@ function mergePerAgentConfig(
       config.perAgent[agentName] = mergedAgentConfig;
     }
   }
+}
+
+function mergePerAgentNoopWatchValue(
+  target: PerAgentThresholdConfig,
+  source: Record<string, unknown>,
+  pathPrefix: string,
+  logger: ConfigLogger,
+): void {
+  const value = source["noopWatch"];
+
+  if (value === undefined) {
+    return;
+  }
+
+  const parsed = parseBoolean(value);
+  if (parsed === null) {
+    logger(`Invalid ${pathPrefix}.noopWatch value; expected boolean. Ignoring.`, "warn");
+    return;
+  }
+
+  target.noopWatch = parsed;
 }
 
 function mergePerAgentDurationConfig(
@@ -455,6 +528,7 @@ function getProjectConfigPath(options: LoadWatchdogConfigOptions): string {
 export function getDefaultWatchdogConfig(): WatchdogConfig {
   return {
     ...DEFAULT_WATCHDOG_CONFIG,
+    noop: cloneNoopConfig(DEFAULT_WATCHDOG_CONFIG.noop),
     duration: cloneDurationConfig(DEFAULT_WATCHDOG_CONFIG.duration),
     perAgent: {},
   };

@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add configurable no-op watch defaults docs, including `noop.enabled`, per-agent `noopWatch`, and the default watched specialist set.
 - Successful `watchdog_abort` calls now clear the aborted session from active watchdog tracking/status so it is not auto-aborted again.
 
 ## 1.0.0

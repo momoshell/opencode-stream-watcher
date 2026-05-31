@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { loadWatchdogConfig } from "../src/config.js";
-import { createTrackedSessions, scanTrackedSessions, startTracking } from "../src/state.js";
+import {
+  createTrackedSessions,
+  resolveNoopWatch,
+  scanTrackedSessions,
+  startTracking,
+} from "../src/state.js";
 import type { WatchdogConfig } from "../src/types.js";
 
 type ThresholdScanConfig = Pick<WatchdogConfig, "warnThresholdMs" | "abortThresholdMs" | "perAgent">;
@@ -17,6 +22,113 @@ const GLOBAL_THRESHOLDS: ThresholdScanConfig = {
 };
 
 describe("per-agent threshold overrides", () => {
+  test("defaults no-op watch to enabled", async () => {
+    const config = await loadWatchdogConfig();
+    expect(config.noop.enabled).toBeTrue();
+  });
+
+  test("parses noop.enabled and per-agent noopWatch booleans", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+    const globalConfigPath = join(tempDir, "global.json");
+    const projectConfigPath = join(tempDir, "project.json");
+
+    try {
+      await writeFile(globalConfigPath, JSON.stringify({
+        "stream-watchdog": {
+          noop: {
+            enabled: false,
+          },
+          perAgent: {
+            coder: {
+              noopWatch: true,
+            },
+          },
+        },
+      }));
+      await writeFile(projectConfigPath, JSON.stringify({
+        "stream-watchdog": {
+          noop: {
+            enabled: true,
+          },
+          perAgent: {
+            coder: {
+              noopWatch: false,
+            },
+          },
+        },
+      }));
+
+      const config = await loadWatchdogConfig({
+        globalConfigPath,
+        projectConfigPath,
+      });
+
+      expect(config.noop.enabled).toBeTrue();
+      expect(config.perAgent.coder?.noopWatch).toBeFalse();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("warns on invalid noop values and preserves valid per-agent fallback", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-test-"));
+    const globalConfigPath = join(tempDir, "global.json");
+    const projectConfigPath = join(tempDir, "project.json");
+    const logMessages: string[] = [];
+
+    try {
+      await writeFile(globalConfigPath, JSON.stringify({
+        "stream-watchdog": {
+          noop: {
+            enabled: false,
+          },
+          perAgent: {
+            coder: {
+              noopWatch: true,
+            },
+          },
+        },
+      }));
+      await writeFile(projectConfigPath, JSON.stringify({
+        "stream-watchdog": {
+          noop: {
+            enabled: "bad",
+            extra: true,
+          },
+          perAgent: {
+            coder: {
+              noopWatch: "bad",
+              unknown: true,
+            },
+          },
+        },
+      }));
+
+      const config = await loadWatchdogConfig({
+        globalConfigPath,
+        projectConfigPath,
+        logger: (message) => logMessages.push(message),
+      });
+
+      expect(config.noop.enabled).toBeTrue();
+      expect(config.perAgent.coder?.noopWatch).toBeTrue();
+      expect(logMessages).toContain(
+        "Invalid stream-watchdog.noop.enabled value; expected boolean. Using fallback.",
+      );
+      expect(logMessages).toContain(
+        "Invalid stream-watchdog.noop.extra value; key is not supported. Ignoring.",
+      );
+      expect(logMessages).toContain(
+        "Invalid stream-watchdog.perAgent.coder.noopWatch value; expected boolean. Ignoring.",
+      );
+      expect(logMessages).toContain(
+        "Invalid stream-watchdog.perAgent.coder.unknown value; key is not supported for per-agent overrides. Ignoring.",
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("does not warn an exact agent match before its overridden threshold", () => {
     const sessions = createTrackedSessions();
     const tracked = startTracking(sessions, "session-1", { agent: "code-reviewer-deep" }, 0);
@@ -191,5 +303,52 @@ describe("per-agent threshold overrides", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("resolveNoopWatch only watches non-aborted non-mutated non-blocker default watched agents", () => {
+    const baseConfig = {
+      noop: {
+        enabled: true,
+      },
+      perAgent: {},
+    } satisfies Pick<WatchdogConfig, "noop" | "perAgent">;
+
+    const watched = {
+      sessionID: "s1",
+      agent: "coder",
+      callStart: 0,
+      lastActivity: 0,
+      mutated: false,
+      endedWithBlocker: false,
+      state: "tracking",
+      stateSince: 0,
+    };
+
+    expect(resolveNoopWatch(watched, baseConfig)).toBeTrue();
+    expect(resolveNoopWatch({ ...watched, state: "aborted" }, baseConfig)).toBeFalse();
+    expect(resolveNoopWatch({ ...watched, mutated: true }, baseConfig)).toBeFalse();
+    expect(resolveNoopWatch({ ...watched, endedWithBlocker: true }, baseConfig)).toBeFalse();
+    expect(resolveNoopWatch({ ...watched, agent: "code-reviewer-deep" }, baseConfig)).toBeFalse();
+    expect(
+      resolveNoopWatch({ ...watched, agent: "code-reviewer-deep" }, {
+        ...baseConfig,
+        perAgent: {
+          "code-reviewer-deep": {
+            noopWatch: true,
+          },
+        },
+      }),
+    ).toBeFalse();
+    expect(resolveNoopWatch(watched, { ...baseConfig, noop: { enabled: false } })).toBeFalse();
+    expect(
+      resolveNoopWatch(watched, {
+        ...baseConfig,
+        perAgent: {
+          coder: {
+            noopWatch: false,
+          },
+        },
+      }),
+    ).toBeFalse();
   });
 });

@@ -11,6 +11,9 @@ const DEFAULT_DURATION = {
   minToastMs: 5_000,
   slowToastMs: 30_000,
 };
+const DEFAULT_NOOP = {
+  enabled: true,
+};
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -45,6 +48,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });
@@ -82,6 +86,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 15_000,
       toast: false,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });
@@ -123,6 +128,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });
@@ -163,6 +169,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });
@@ -191,6 +198,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });
@@ -209,6 +217,7 @@ describe("loadWatchdogConfig", () => {
       tickMs: 10_000,
       toast: true,
       log: true,
+      noop: DEFAULT_NOOP,
       duration: DEFAULT_DURATION,
       perAgent: {},
     });

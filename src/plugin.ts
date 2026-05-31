@@ -5,6 +5,7 @@ import {
   createTrackedSessions,
   recordPartActivity,
   resolveDurationConfig,
+  resolveNoopWatch,
   scanTrackedSessions,
   snapshotTrackedSession,
   startTracking,
@@ -39,15 +40,6 @@ import type {
 } from "./types.js";
 
 const SERVICE = "stream-watchdog";
-const NOOP_WATCHED_AGENTS = new Set([
-  "coder",
-  "backend-specialist",
-  "frontend-specialist",
-  "devops-specialist",
-  "test-engineer",
-  "code-simplifier",
-  "svelte-file-editor",
-]);
 type PluginClient = Parameters<Plugin>[0]["client"];
 
 type ActiveTickLoop = {
@@ -218,7 +210,7 @@ async function handleSessionIdle(
   lastTurnMsBySession: Map<string, number>,
   stats: WatchdogStats,
   sessionID: string | undefined,
-  config: Pick<WatchdogConfig, "duration" | "log" | "toast" | "perAgent">,
+  config: Pick<WatchdogConfig, "duration" | "log" | "noop" | "toast" | "perAgent">,
 ): Promise<void> {
   if (!sessionID) {
     return;
@@ -255,7 +247,7 @@ async function handleSessionIdle(
     }
   }
 
-  const noopDetected = recordNoopIfNeeded(recentEvents, tracked, now);
+  const noopDetected = recordNoopIfNeeded(recentEvents, tracked, config, now);
 
   if (noopDetected && config.log) {
     await safeLog(client, buildNoopLogEntry({
@@ -280,9 +272,10 @@ async function handleSessionIdle(
 function recordNoopIfNeeded(
   recentEvents: RecentWatchdogEvent[],
   tracked: TrackedSession,
+  config: Pick<WatchdogConfig, "noop" | "perAgent">,
   now: number,
 ): boolean {
-  if (!shouldRecordNoop(tracked)) {
+  if (!resolveNoopWatch(tracked, config)) {
     return false;
   }
 
@@ -295,17 +288,6 @@ function recordNoopIfNeeded(
 
   return true;
 }
-
-function shouldRecordNoop(tracked: TrackedSession): boolean {
-  return (
-    tracked.state !== "aborted" &&
-    tracked.agent !== undefined &&
-    NOOP_WATCHED_AGENTS.has(tracked.agent) &&
-    tracked.mutated !== true &&
-    tracked.endedWithBlocker !== true
-  );
-}
-
 function readProjectRoot(project: unknown): string | undefined {
   if (isNonEmptyString(project)) {
     return project;
