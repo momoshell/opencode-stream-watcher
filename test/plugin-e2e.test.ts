@@ -281,7 +281,82 @@ describe("StreamWatchdog plugin e2e", () => {
 
       const status = await statusTool.execute({ verbose: true });
       expect(status).toContain("stream-watchdog: no tracked sessions.");
+      expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=1");
+      expect(status).toContain("byAgent agent=coder warns=0 resumes=0 aborts=0 noops=1");
       expect(status).toContain("type=NOOP sessionID=session-noop-default agent=coder");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("records NOOP stats when log and toast notifications are disabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-noop-quiet-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir, { log: false, toast: false });
+      const client = createPluginClient({
+        sessionMetadata: { agent: "coder", slug: "noop-quiet" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-noop-quiet"));
+      await waitForMetadata(client);
+      await plugin.event?.(sessionIdleEvent("session-noop-quiet"));
+
+      expect(findIncidentLog(client.logBodies, "NOOP")).toBeUndefined();
+      expect(findToastByTitle(client.toastBodies, "ℹ No-op turn detected")).toBeUndefined();
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("stream-watchdog: no tracked sessions.");
+      expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=1");
+      expect(status).toContain("byAgent agent=coder warns=0 resumes=0 aborts=0 noops=1");
+    } finally {
+      restoreDateNow();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("counts duplicate idle NOOP events once while notifications are pending", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "stream-watchdog-e2e-noop-duplicate-"));
+    const restoreDateNow = mockDateNow(1_000);
+
+    try {
+      await writeWatchdogConfig(tempDir);
+      const client = createPluginClient({
+        logDelayMs: 25,
+        sessionMetadata: { agent: "coder", slug: "noop-duplicate" },
+      });
+      const plugin = await StreamWatchdog({
+        client: client.client,
+        directory: tempDir,
+        project: tempDir,
+        worktree: tempDir,
+      } satisfies PluginInput);
+      const statusTool = plugin.tool?.watchdog_status as StatusTool;
+
+      await plugin.event?.(busyEvent("session-noop-duplicate"));
+      await waitForMetadata(client);
+      await Promise.all([
+        plugin.event?.(sessionIdleEvent("session-noop-duplicate")),
+        plugin.event?.(sessionIdleEvent("session-noop-duplicate")),
+      ]);
+
+      expect(client.logBodies.filter((entry) => entry.message === "NOOP")).toHaveLength(1);
+      expect(client.toastBodies.filter((body) => body.title === "ℹ No-op turn detected")).toHaveLength(1);
+
+      const status = await statusTool.execute({ verbose: true });
+      expect(status).toContain("stream-watchdog: no tracked sessions.");
+      expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=1");
+      expect(status).toContain("byAgent agent=coder warns=0 resumes=0 aborts=0 noops=1");
+      expect(status).toContain("type=NOOP sessionID=session-noop-duplicate agent=coder");
     } finally {
       restoreDateNow();
       await rm(tempDir, { recursive: true, force: true });
@@ -341,6 +416,8 @@ describe("StreamWatchdog plugin e2e", () => {
 
         const status = await statusTool.execute({ verbose: true });
         expect(status).toContain("stream-watchdog: no tracked sessions.");
+        expect(status).toContain("totals warns=0 resumes=0 aborts=0 noops=0");
+        expect(status).toContain(`byAgent agent=${testCase.agent} warns=0 resumes=0 aborts=0 noops=0`);
         expect(status).not.toContain("type=NOOP");
       } finally {
         restoreDateNow();
@@ -576,6 +653,7 @@ async function writeWatchdogConfig(
 
 function createPluginClient(options: {
   sessionMetadata?: { agent?: string; slug?: string };
+  logDelayMs?: number;
   throwOnSessionGet?: boolean;
   throwOnLog?: boolean;
   throwOnToast?: boolean;
@@ -596,6 +674,10 @@ function createPluginClient(options: {
       log: async ({ body }: { body: LogBody }) => {
         if (options.throwOnLog) {
           throw new Error("app.log unavailable");
+        }
+
+        if (options.logDelayMs !== undefined) {
+          await sleep(options.logDelayMs);
         }
 
         logBodies.push(body);

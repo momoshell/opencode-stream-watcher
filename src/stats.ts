@@ -4,6 +4,7 @@ export interface AgentCounters {
   warns: number;
   resumes: number;
   aborts: number;
+  noops: number;
 }
 
 export interface DurationStats {
@@ -41,6 +42,10 @@ export class WatchdogStats {
     this.recordAgentCounter(agent, "aborts");
   }
 
+  recordNoop(agent: string | null | undefined): void {
+    this.recordAgentCounter(agent, "noops");
+  }
+
   recordDuration(agent: string | null | undefined, durationMs: number): void {
     if (!Number.isFinite(durationMs) || durationMs < 0) {
       return;
@@ -58,6 +63,7 @@ export class WatchdogStats {
     let warns = 0;
     let resumes = 0;
     let aborts = 0;
+    let noops = 0;
 
     const byAgent: Record<string, AgentStats> = {};
 
@@ -65,6 +71,7 @@ export class WatchdogStats {
       warns += bucket.counters.warns;
       resumes += bucket.counters.resumes;
       aborts += bucket.counters.aborts;
+      noops += bucket.counters.noops;
       byAgent[agent] = {
         ...bucket.counters,
         duration: summarizeDurations(bucket.durationSamples),
@@ -72,7 +79,7 @@ export class WatchdogStats {
     }
 
     return {
-      totals: { warns, resumes, aborts },
+      totals: { warns, resumes, aborts, noops },
       byAgent,
     };
   }
@@ -98,6 +105,7 @@ export class WatchdogStats {
         warns: 0,
         resumes: 0,
         aborts: 0,
+        noops: 0,
       },
       durationSamples: [],
     };
@@ -147,7 +155,7 @@ export function formatWatchdogStats(
   const lines: string[] = [];
   lines.push(options.heading ?? "Aggregate stats:");
   lines.push(
-    `- totals warns=${snapshot.totals.warns} resumes=${snapshot.totals.resumes} aborts=${snapshot.totals.aborts}`,
+    `- totals warns=${snapshot.totals.warns} resumes=${snapshot.totals.resumes} aborts=${snapshot.totals.aborts} noops=${snapshot.totals.noops}`,
   );
 
   const byAgentNames = Object.keys(snapshot.byAgent).sort((left, right) => left.localeCompare(right));
@@ -162,7 +170,7 @@ export function formatWatchdogStats(
       }
 
       lines.push(
-        `- byAgent agent=${agent} warns=${agentStats.warns} resumes=${agentStats.resumes} aborts=${agentStats.aborts} durationCount=${agentStats.duration.count} durationP50Ms=${agentStats.duration.p50} durationP95Ms=${agentStats.duration.p95} durationMaxMs=${agentStats.duration.max}`,
+        `- byAgent agent=${agent} warns=${agentStats.warns} resumes=${agentStats.resumes} aborts=${agentStats.aborts} noops=${agentStats.noops} durationCount=${agentStats.duration.count} durationP50Ms=${agentStats.duration.p50} durationP95Ms=${agentStats.duration.p95} durationMaxMs=${agentStats.duration.max}`,
       );
     }
   }

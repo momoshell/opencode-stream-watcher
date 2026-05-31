@@ -4,7 +4,7 @@ import { formatWatchdogStats, WatchdogStats } from "../src/stats.js";
 import { buildWatchdogStatus } from "../src/tools.js";
 
 describe("WatchdogStats", () => {
-  test("tracks warns/resumes/aborts by agent with unknown fallback", () => {
+  test("tracks warns/resumes/aborts/noops by agent with unknown fallback", () => {
     const stats = new WatchdogStats();
 
     stats.recordWarn("agent-a");
@@ -12,20 +12,24 @@ describe("WatchdogStats", () => {
     stats.recordResume(undefined);
     stats.recordAbort(null);
     stats.recordAbort("agent-a");
+    stats.recordNoop(null);
+    stats.recordNoop("agent-a");
 
     const snapshot = stats.snapshot();
 
-    expect(snapshot.totals).toEqual({ warns: 2, resumes: 1, aborts: 2 });
+    expect(snapshot.totals).toEqual({ warns: 2, resumes: 1, aborts: 2, noops: 2 });
     expect(snapshot.byAgent["agent-a"]).toEqual({
       warns: 1,
       resumes: 0,
       aborts: 1,
+      noops: 1,
       duration: { count: 0, p50: 0, p95: 0, max: 0 },
     });
     expect(snapshot.byAgent.unknown).toEqual({
       warns: 1,
       resumes: 1,
       aborts: 1,
+      noops: 1,
       duration: { count: 0, p50: 0, p95: 0, max: 0 },
     });
   });
@@ -70,7 +74,7 @@ describe("WatchdogStats", () => {
 
     expect(lines).toEqual([
       "Aggregate stats:",
-      "- totals warns=0 resumes=0 aborts=0",
+      "- totals warns=0 resumes=0 aborts=0 noops=0",
       "- byAgent none",
     ]);
   });
@@ -78,13 +82,14 @@ describe("WatchdogStats", () => {
   test("status output shows per-agent duration stats", () => {
     const stats = new WatchdogStats();
     stats.recordWarn("agent-a");
+    stats.recordNoop("agent-a");
     stats.recordDuration("agent-a", 200);
     stats.recordDuration("agent-a", 400);
 
     const status = buildWatchdogStatus(new Map(), [], Date.now(), false, () => stats.snapshot());
 
     expect(status).toContain(
-      "- byAgent agent=agent-a warns=1 resumes=0 aborts=0 durationCount=2 durationP50Ms=200 durationP95Ms=400 durationMaxMs=400",
+      "- byAgent agent=agent-a warns=1 resumes=0 aborts=0 noops=1 durationCount=2 durationP50Ms=200 durationP95Ms=400 durationMaxMs=400",
     );
   });
 
@@ -95,6 +100,6 @@ describe("WatchdogStats", () => {
 
     expect(status).toContain("stream-watchdog: no tracked sessions.");
     expect(status).toContain("Aggregate stats:");
-    expect(status).toContain("- totals warns=0 resumes=0 aborts=0");
+    expect(status).toContain("- totals warns=0 resumes=0 aborts=0 noops=0");
   });
 });
